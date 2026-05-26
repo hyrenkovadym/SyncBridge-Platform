@@ -1,0 +1,181 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  OPERATOR
+  ADMIN
+}
+
+enum ConnectorType {
+  REST_API
+  WEBHOOK
+  CSV_UPLOAD
+  JSON_UPLOAD
+  DATABASE
+  GOOGLE_SHEETS
+  ONE_C_EXPORT
+  MANUAL
+}
+
+enum ConnectorStatus {
+  ACTIVE
+  PAUSED
+  ERROR
+}
+
+enum PipelineStatus {
+  ACTIVE
+  PAUSED
+  ARCHIVED
+}
+
+enum SyncRunStatus {
+  QUEUED
+  RUNNING
+  SUCCESS
+  FAILED
+  CANCELLED
+}
+
+enum WebhookEventStatus {
+  RECEIVED
+  PROCESSED
+  FAILED
+  IGNORED
+}
+
+model User {
+  id            String         @id @default(uuid())
+  email         String         @unique
+  passwordHash  String
+  fullName      String
+  role          UserRole       @default(USER)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  refreshTokens RefreshToken[]
+  connectors    Connector[]
+  pipelines     SyncPipeline[]
+  auditLogs     AuditLog[]
+}
+
+model RefreshToken {
+  id        String   @id @default(uuid())
+  userId    String
+  tokenHash String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  revokedAt DateTime?
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Connector {
+  id            String          @id @default(uuid())
+  name          String
+  type          ConnectorType
+  status        ConnectorStatus @default(ACTIVE)
+  configJson    Json
+  ownerId       String
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+  owner         User            @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  pipelines     SyncPipeline[]
+  webhookEvents WebhookEvent[]
+
+  @@index([ownerId])
+}
+
+model SyncPipeline {
+  id                String         @id @default(uuid())
+  name              String
+  description       String?
+  sourceConnectorId String
+  targetName        String
+  status            PipelineStatus @default(ACTIVE)
+  mappingJson       Json
+  ownerId           String
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  sourceConnector   Connector      @relation(fields: [sourceConnectorId], references: [id], onDelete: Restrict)
+  owner             User           @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  syncRuns          SyncRun[]
+  syncedRecords     SyncedRecord[]
+
+  @@index([ownerId])
+  @@index([sourceConnectorId])
+}
+
+model SyncRun {
+  id               String        @id @default(uuid())
+  pipelineId       String
+  status           SyncRunStatus @default(QUEUED)
+  recordsReceived  Int           @default(0)
+  recordsProcessed Int           @default(0)
+  recordsFailed    Int           @default(0)
+  errorMessage     String?
+  startedAt        DateTime?
+  finishedAt       DateTime?
+  createdAt        DateTime      @default(now())
+  pipeline         SyncPipeline  @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  syncedRecords    SyncedRecord[]
+
+  @@index([pipelineId])
+  @@index([status])
+}
+
+model WebhookEvent {
+  id          String             @id @default(uuid())
+  connectorId String?
+  eventType   String
+  status      WebhookEventStatus @default(RECEIVED)
+  payloadJson Json
+  headersJson Json?
+  receivedAt  DateTime           @default(now())
+  processedAt DateTime?
+  errorMessage String?
+  connector   Connector?         @relation(fields: [connectorId], references: [id], onDelete: SetNull)
+
+  @@index([connectorId])
+  @@index([status])
+}
+
+model SyncedRecord {
+  id             String       @id @default(uuid())
+  pipelineId     String
+  externalId     String?
+  sourceType     String
+  rawJson        Json
+  normalizedJson Json
+  syncRunId      String?
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @updatedAt
+  pipeline       SyncPipeline @relation(fields: [pipelineId], references: [id], onDelete: Cascade)
+  syncRun        SyncRun?     @relation(fields: [syncRunId], references: [id], onDelete: SetNull)
+
+  @@index([pipelineId])
+  @@index([syncRunId])
+  @@index([externalId])
+}
+
+model AuditLog {
+  id           String   @id @default(uuid())
+  actorId      String?
+  action       String
+  entityType   String
+  entityId     String
+  metadataJson Json
+  createdAt    DateTime @default(now())
+  actor        User?    @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([actorId])
+  @@index([entityType, entityId])
+  @@index([action])
+}

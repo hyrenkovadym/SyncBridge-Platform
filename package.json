@@ -1,0 +1,19 @@
+{
+  "name": "syncbridge-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "SyncBridge Platform monorepo",
+  "workspaces": [
+    "apps/api",
+    "apps/web"
+  ],
+  "scripts": {
+    "dev": "concurrently -n api,web -c cyan,magenta \"npm run start:dev -w @syncbridge/api\" \"npm run dev -w @syncbridge/web\"",
+    "test": "npm run test -w @syncbridge/api",
+    "build": "npm run build -w @syncbridge/api && npm run build -w @syncbridge/web",
+    "lint": "npm run lint -w @syncbridge/api && npm run lint -w @syncbridge/web"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

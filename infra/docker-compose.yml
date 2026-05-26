@@ -1,0 +1,60 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: syncbridge-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: syncbridge
+      POSTGRES_PASSWORD: syncbridge
+      POSTGRES_DB: syncbridge
+    ports:
+      - '5433:5432'
+    volumes:
+      - syncbridge_postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    container_name: syncbridge-redis
+    restart: unless-stopped
+    ports:
+      - '6380:6379'
+    volumes:
+      - syncbridge_redis_data:/data
+
+  api:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    container_name: syncbridge-api
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      NODE_ENV: development
+      PORT: 4100
+      DATABASE_URL: postgresql://syncbridge:syncbridge@postgres:5432/syncbridge?schema=public
+      REDIS_URL: redis://redis:6379
+      JWT_ACCESS_SECRET: replace_me_access_secret
+      JWT_REFRESH_SECRET: replace_me_refresh_secret
+      CORS_ORIGIN: http://localhost:3001
+    ports:
+      - '4100:4100'
+
+  web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+    container_name: syncbridge-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      NODE_ENV: development
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:4100/api
+    ports:
+      - '3001:3001'
+
+volumes:
+  syncbridge_postgres_data:
+  syncbridge_redis_data:

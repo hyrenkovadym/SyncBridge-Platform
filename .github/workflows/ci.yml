@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+  pull_request:
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: syncbridge
+          POSTGRES_PASSWORD: syncbridge
+          POSTGRES_DB: syncbridge
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd "pg_isready -U syncbridge -d syncbridge"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      NODE_ENV: test
+      PORT: 4100
+      DATABASE_URL: postgresql://syncbridge:syncbridge@localhost:5433/syncbridge?schema=public
+      REDIS_URL: redis://localhost:6380
+      JWT_ACCESS_SECRET: test_access_secret
+      JWT_REFRESH_SECRET: test_refresh_secret
+      CORS_ORIGIN: http://localhost:3001
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Generate Prisma client
+        run: npm run prisma:generate -w @syncbridge/api
+
+      - name: Run API tests
+        run: npm run test -w @syncbridge/api
+
+      - name: Run API lint
+        run: npm run lint -w @syncbridge/api
+
+      - name: Build API
+        run: npm run build -w @syncbridge/api
+
+      - name: Build Web
+        run: npm run build -w @syncbridge/web
