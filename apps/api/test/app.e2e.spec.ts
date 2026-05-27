@@ -187,6 +187,197 @@ describe('SyncBridge API (e2e)', () => {
     expect(response.body.status).toBe('ARCHIVED');
   });
 
+  it('owner can configure and read pipeline schedule', async () => {
+    const auth = await registerUser(app, userOne);
+    const connector = await createConnector(app, auth.accessToken, {
+      name: 'Schedule Source',
+      type: 'DATABASE',
+      configJson: { host: 'db.local' },
+    });
+    const pipeline = await createPipeline(app, auth.accessToken, {
+      name: 'Schedule Pipeline',
+      sourceConnectorId: connector.id,
+      targetName: 'contacts_target',
+      mappingJson: { email: 'contact.email' },
+    });
+
+    const updateResponse = await request(app.getHttpServer())
+      .patch(`/api/pipelines/${pipeline.id}/schedule`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .send({
+        scheduleEnabled: true,
+        scheduleCron: '*/5 * * * *',
+        scheduleTimezone: 'UTC',
+        incrementalMode: true,
+      })
+      .expect(200);
+
+    expect(updateResponse.body.scheduleEnabled).toBe(true);
+    expect(updateResponse.body.scheduleCron).toBe('*/5 * * * *');
+    expect(updateResponse.body.scheduleTimezone).toBe('UTC');
+    expect(updateResponse.body.incrementalMode).toBe(true);
+    expect(updateResponse.body.nextRunAt).toBeDefined();
+
+    const getResponse = await request(app.getHttpServer())
+      .get(`/api/pipelines/${pipeline.id}/schedule`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .expect(200);
+
+    expect(getResponse.body.pipelineId).toBe(pipeline.id);
+    expect(getResponse.body.scheduleEnabled).toBe(true);
+  });
+
+  it('schedule enable requires valid cron expression', async () => {
+    const auth = await registerUser(app, userOne);
+    const connector = await createConnector(app, auth.accessToken, {
+      name: 'Schedule Validation Source',
+      type: 'DATABASE',
+      configJson: { host: 'db.local' },
+    });
+    const pipeline = await createPipeline(app, auth.accessToken, {
+      name: 'Schedule Validation Pipeline',
+      sourceConnectorId: connector.id,
+      targetName: 'contacts_target',
+      mappingJson: { email: 'contact.email' },
+    });
+
+    await request(app.getHttpServer())
+      .patch(`/api/pipelines/${pipeline.id}/schedule`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .send({ scheduleEnabled: true })
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .patch(`/api/pipelines/${pipeline.id}/schedule`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .send({
+        scheduleEnabled: true,
+        scheduleCron: 'invalid cron',
+        scheduleTimezone: 'UTC',
+      })
+      .expect(400);
+  });
+
+  it("user cannot update another user's pipeline schedule", async () => {
+    const authOne = await registerUser(app, userOne);
+    const authTwo = await registerUser(app, userTwo);
+
+    const connector = await createConnector(app, authOne.accessToken, {
+      name: 'Owner Connector',
+      type: 'DATABASE',
+      configJson: { host: 'db.local' },
+    });
+    const pipeline = await createPipeline(app, authOne.accessToken, {
+      name: 'Owner Pipeline',
+      sourceConnectorId: connector.id,
+      targetName: 'owner_target',
+      mappingJson: { email: 'contact.email' },
+    });
+
+    await request(app.getHttpServer())
+      .patch(`/api/pipelines/${pipeline.id}/schedule`)
+      .set('Authorization', `Bearer ${authTwo.accessToken}`)
+      .send({
+        scheduleEnabled: true,
+        scheduleCron: '*/5 * * * *',
+        scheduleTimezone: 'UTC',
+      })
+      .expect(403);
+  });
+
+  it('archived and paused pipelines cannot be scheduled or triggered', async () => {
+    const auth = await registerUser(app, userOne);
+    const connector = await createConnector(app, auth.accessToken, {
+      name: 'Lifecycle Connector',
+      type: 'DATABASE',
+      configJson: { host: 'db.local' },
+    });
+    const archivedPipeline = await createPipeline(app, auth.accessToken, {
+      name: 'Archived Pipeline',
+      sourceConnectorId: connector.id,
+      targetName: 'archived_target',
+      mappingJson: { email: 'contact.email' },
+    });
+
+    await request(app.getHttpServer())
+      .patch(`/api/pipelines/${archivedPipeline.id}/status`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .send({ status: 'ARCHIVED' })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/api/pipelines/${archivedPipeline.id}/schedule`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .send({
+        scheduleEnabled: true,
+        scheduleCron: '*/5 * * * *',
+        scheduleTimezone: 'UTC',
+      })
+      .expect(400);
+
+    const pausedPipeline = await createPipeline(app, auth.accessToken, {
+      name: 'Paused Pipeline',
+      sourceConnectorId: connector.id,
+      targetName: 'paused_target',
+      mappingJson: { email: 'contact.email' },
+    });
+
+    await request(app.getHttpServer())
+      .patch(`/api/pipelines/${pausedPipeline.id}/status`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .send({ status: 'PAUSED' })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .post(`/api/pipelines/${pausedPipeline.id}/schedule/trigger`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .expect(400);
+  });
+
+  it('schedule trigger creates scheduled sync run in sync mode', async () => {
+    const auth = await registerUser(app, userOne);
+    const connector = await createConnector(app, auth.accessToken, {
+      name: 'Trigger Connector',
+      type: 'JSON_UPLOAD',
+      configJson: { mode: 'test' },
+    });
+    const pipeline = await createPipeline(app, auth.accessToken, {
+      name: 'Trigger Pipeline',
+      sourceConnectorId: connector.id,
+      targetName: 'contacts',
+      mappingJson: {
+        fields: {
+          email: { path: 'email', required: true, type: 'string', lowercase: true, trim: true },
+        },
+      },
+    });
+
+    const triggerResponse = await request(app.getHttpServer())
+      .post(`/api/pipelines/${pipeline.id}/schedule/trigger`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .expect(201);
+
+    expect(triggerResponse.body.triggerType).toBe('SCHEDULED');
+  });
+
+  it('scheduler status endpoint is available to authenticated users', async () => {
+    const auth = await registerUser(app, userOne);
+
+    const response = await request(app.getHttpServer())
+      .get('/api/scheduler/status')
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .expect(200);
+
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        schedulerEnabled: expect.any(Boolean),
+        processRole: expect.any(String),
+        pollIntervalSeconds: expect.any(Number),
+        lockTtlSeconds: expect.any(Number),
+      }),
+    );
+  });
+
   it("user cannot create pipeline with another user's connector", async () => {
     const authOne = await registerUser(app, userOne);
     const authTwo = await registerUser(app, userTwo);
@@ -274,6 +465,7 @@ describe('SyncBridge API (e2e)', () => {
     expect(runResponse.body.summary.recordsReceived).toBe(1);
     expect(runResponse.body.summary.recordsProcessed).toBe(1);
     expect(runResponse.body.summary.recordsFailed).toBe(0);
+    expect(runResponse.body.triggerType).toBe('MANUAL');
 
     const records = await prisma.syncedRecord.findMany({ where: { syncRunId: runResponse.body.id as string } });
     expect(records).toHaveLength(1);
@@ -548,6 +740,7 @@ describe('SyncBridge API (e2e)', () => {
 
     expect(runs.body).toHaveLength(1);
     expect(runs.body[0].status).toBe('SUCCESS');
+    expect(runs.body[0].triggerType).toBe('WEBHOOK');
     expect(runs.body[0].recordsProcessed).toBe(1);
     expect(runs.body[0].recordsFailed).toBe(0);
 

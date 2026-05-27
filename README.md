@@ -2,111 +2,91 @@
 
 **Subtitle:** API/Data Integration & Automation Platform
 
-SyncBridge Platform is a production-style portfolio project focused on backend engineering for integration workflows.
+SyncBridge is a production-style monorepo for integration workflows.  
+Phase 6 adds scheduler-driven pipeline runs and incremental cursor foundations on top of existing queue/worker architecture.
 
-Phase 5 introduces webhook processing and retry flow on top of the existing BullMQ worker architecture, while preserving sync fallback mode for local/tests.
-
-## Current Stack
-- NestJS API
+## Stack
+- NestJS API (`apps/api`)
 - TypeScript
 - PostgreSQL + Prisma
-- Redis + BullMQ queue processing
-- JWT auth + refresh token flow
+- Redis + BullMQ
+- JWT auth + refresh/logout
 - RBAC (`USER`, `OPERATOR`, `ADMIN`)
-- Next.js frontend
-- Jest + Supertest tests
-- Swagger docs
+- Next.js frontend (`apps/web`)
+- Jest/Supertest
+- Swagger
 - Docker Compose
 
-## Phase 5 Highlights
-- Queue mode toggle:
-  - `QUEUE_MODE=sync` executes runs directly (local/test fallback)
-  - `QUEUE_MODE=async` enqueues runs to BullMQ
-- Webhook processing queue:
-  - Queue: `webhooks`
-  - Job: `process-webhook-event`
-- Webhook lifecycle:
-  - `RECEIVED -> PROCESSED | FAILED | IGNORED`
-- Webhook retry and manual process endpoints:
-  - `POST /api/webhooks/events/:id/retry`
-  - `POST /api/webhooks/events/:id/process`
-- Webhook background job lookup:
-  - `GET /api/webhooks/events/:id/job`
-- New jobs module and endpoints:
-  - `GET /api/jobs/:id`
-  - `GET /api/sync-runs/:id/job`
-- New worker runtime:
-  - `npm run worker -w @syncbridge/api`
-  - `npm run worker:dev -w @syncbridge/api`
-- Background job tracking in Prisma (`BackgroundJob` model).
-- Async sync-run lifecycle audit events:
-  - `sync_run_queued`, `sync_run_started`, `sync_run_completed`, `sync_run_failed`
-  - `background_job_queued`, `background_job_started`, `background_job_completed`, `background_job_failed`
-- Webhook lifecycle audit events:
-  - `webhook_event_processing_queued`, `webhook_event_processing_started`
-  - `webhook_event_processed`, `webhook_event_processing_failed`
-  - `webhook_event_retry_queued`, `webhook_event_ignored`, `webhook_event_duplicate_ignored`
-- Frontend async UX:
-  - pipeline run action handles sync/async responses
-  - queued jobs are polled and surfaced in `/pipelines` and `/sync-runs`
-  - webhook events page supports retry/process actions and job status visibility
+## Phase 6 Highlights
+- Scheduler endpoints:
+  - `PATCH /api/pipelines/:id/schedule`
+  - `GET /api/pipelines/:id/schedule`
+  - `POST /api/pipelines/:id/schedule/trigger`
+  - `GET /api/scheduler/status`
+- Scheduler polling foundation (worker role only when enabled)
+- Cron + timezone validation
+- Scheduled run enqueue safeguards (skip when active run already exists)
+- Incremental cursor foundation:
+  - `cursorJson` and `incrementalMode` on pipeline
+  - optional `ignoreCursor` in `POST /api/pipelines/:id/runs`
+- Sync run trigger types:
+  - `MANUAL`, `WEBHOOK`, `SCHEDULED`
+- Frontend schedule controls on pipeline pages
+
+## Queue/Scheduler Modes
+- `QUEUE_MODE=sync`
+  - API executes sync runs immediately.
+  - Best for tests/local fallback.
+- `QUEUE_MODE=async`
+  - API enqueues jobs; worker executes them.
+- `SCHEDULER_ENABLED=true|false`
+  - Scheduler poller runs only in worker role and non-test env.
 
 ## Local Setup
 1. Install dependencies:
 ```bash
 npm install
 ```
-2. Copy env template:
+2. Create env file:
 ```bash
 cp .env.example .env
 ```
-3. Set queue mode (choose one):
-```bash
-QUEUE_MODE=sync
-```
-or
-```bash
-QUEUE_MODE=async
-```
-4. Generate Prisma client:
+3. Generate Prisma client:
 ```bash
 npm run prisma:generate -w @syncbridge/api
 ```
-5. Run API:
+4. Start API:
 ```bash
 npm run start:dev -w @syncbridge/api
 ```
-6. Run worker (required when `QUEUE_MODE=async`):
+5. Start worker (required for async queue mode):
 ```bash
 npm run worker:dev -w @syncbridge/api
 ```
-7. Run frontend:
+6. Start web:
 ```bash
 npm run dev -w @syncbridge/web
 ```
 
-## Main URLs
-- API base: `http://localhost:4100/api`
+## URLs
+- API: `http://localhost:4100/api`
 - Swagger: `http://localhost:4100/api/docs`
-- Frontend: `http://localhost:3001`
+- Web: `http://localhost:3001`
 
 ## Core Commands
-- API tests: `npm run test -w @syncbridge/api`
-- API lint: `npm run lint -w @syncbridge/api`
-- API build: `npm run build -w @syncbridge/api`
-- API worker (prod build): `npm run worker -w @syncbridge/api`
-- Web build: `npm run build -w @syncbridge/web`
-- Compose config check: `docker compose -f infra/docker-compose.yml config`
+- `npm run prisma:generate -w @syncbridge/api`
+- `npm run test -w @syncbridge/api`
+- `npm run lint -w @syncbridge/api`
+- `npm run build -w @syncbridge/api`
+- `npm run build -w @syncbridge/web`
+- `docker compose -f infra/docker-compose.yml config`
 
-## Mapping Docs
-Detailed mapping engine documentation:
-- [docs/MAPPING.md](docs/MAPPING.md)
-
-Detailed jobs/queue documentation:
+## Docs
+- [docs/API.md](docs/API.md)
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - [docs/JOBS.md](docs/JOBS.md)
-
-Detailed webhook processing documentation:
 - [docs/WEBHOOKS.md](docs/WEBHOOKS.md)
-
-## Roadmap
-See [docs/ROADMAP.md](docs/ROADMAP.md).
+- [docs/MAPPING.md](docs/MAPPING.md)
+- [docs/SCHEDULER.md](docs/SCHEDULER.md)
+- [docs/SECURITY.md](docs/SECURITY.md)
+- [docs/ROADMAP.md](docs/ROADMAP.md)

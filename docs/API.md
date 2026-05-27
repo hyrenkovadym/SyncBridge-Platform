@@ -1,10 +1,7 @@
-# SyncBridge API Reference (Phase 5)
+# SyncBridge API Reference (Phase 6)
 
-Base URL:
-- `http://localhost:4100/api`
-
-Swagger:
-- `http://localhost:4100/api/docs`
+Base URL: `http://localhost:4100/api`  
+Swagger: `http://localhost:4100/api/docs`
 
 ## Health
 - `GET /health`
@@ -24,10 +21,6 @@ Swagger:
 - `PATCH /connectors/:id`
 - `PATCH /connectors/:id/status`
 
-Connector config policy:
-- `configJson` must be an object.
-- Secret-like keys are rejected (`password`, `token`, `apiKey`, etc.).
-
 ## Pipelines
 - `POST /pipelines`
 - `GET /pipelines`
@@ -37,152 +30,52 @@ Connector config policy:
 - `POST /pipelines/:id/preview`
 - `POST /pipelines/validate-mapping`
 
-### Mapping Format (Primary)
+## Scheduler (Phase 6)
+- `PATCH /pipelines/:id/schedule`
+- `GET /pipelines/:id/schedule`
+- `POST /pipelines/:id/schedule/trigger`
+- `GET /scheduler/status`
+
+Schedule payload (`PATCH /pipelines/:id/schedule`):
 ```json
 {
-  "fields": {
-    "email": { "path": "contact.email", "required": true, "type": "string" },
-    "fullName": { "path": "contact.name", "default": "Unknown", "type": "string" },
-    "amount": { "path": "invoice.total", "type": "number" },
-    "isActive": { "path": "active", "type": "boolean", "default": true }
-  }
+  "scheduleEnabled": true,
+  "scheduleCron": "*/5 * * * *",
+  "scheduleTimezone": "UTC",
+  "incrementalMode": true
 }
 ```
 
-Supported field options:
-- `path`
-- `required`
-- `default`
-- `type`: `string | number | boolean | date | json`
-- `trim`, `lowercase`, `uppercase` (for strings)
-- `compute`: `now | uuid` (simple deterministic computed values)
-
-### Validate Mapping
-`POST /pipelines/validate-mapping`
-
-Request:
-```json
-{
-  "mappingJson": { "fields": { "email": { "path": "contact.email", "type": "string" } } }
-}
-```
-
-Response:
-```json
-{
-  "valid": true,
-  "errors": []
-}
-```
-
-### Preview Transformation
-`POST /pipelines/:id/preview`
-
-Request:
-```json
-{
-  "records": [
-    {
-      "externalId": "1",
-      "raw": {
-        "contact": { "email": "USER@EXAMPLE.COM" }
-      }
-    }
-  ]
-}
-```
-
-Response:
-```json
-{
-  "pipelineId": "...",
-  "results": [
-    {
-      "externalId": "1",
-      "raw": { "contact": { "email": "USER@EXAMPLE.COM" } },
-      "normalized": { "email": "user@example.com" },
-      "errors": []
-    }
-  ],
-  "summary": {
-    "recordsReceived": 1,
-    "recordsValid": 1,
-    "recordsInvalid": 0
-  }
-}
-```
+Rules:
+- owner, `OPERATOR`, `ADMIN` can manage schedule
+- archived pipelines cannot be scheduled
+- paused pipelines cannot be schedule-triggered
+- cron must be valid when scheduling is enabled
 
 ## Sync Runs
 - `POST /pipelines/:id/runs`
 - `GET /pipelines/:id/runs`
-- `GET /sync-runs/:id`
 - `GET /sync-runs`
+- `GET /sync-runs/:id`
 - `GET /sync-runs/:id/job`
 
-Run creation (`POST /pipelines/:id/runs`) accepts:
+Run request payload:
 ```json
 {
   "mockRecords": [
-    {
-      "externalId": "1",
-      "raw": {
-        "contact": { "email": "user@example.com" }
-      }
-    }
-  ]
+    { "externalId": "1", "raw": { "email": "user@example.com" } }
+  ],
+  "ignoreCursor": false
 }
 ```
 
-Behavior in `QUEUE_MODE=sync`:
-- Uses transformation engine per record immediately.
-- Persists `SyncedRecord` only for valid transformed records.
-- Updates run counters (`recordsReceived`, `recordsProcessed`, `recordsFailed`).
-- Run status becomes `FAILED` if at least one record fails transformation.
-
-Behavior in `QUEUE_MODE=async`:
-- Creates `SyncRun` in `QUEUED` state.
-- Creates `BackgroundJob` in `QUEUED` state.
-- Enqueues `execute-sync-run` job in BullMQ queue `sync-runs`.
-- Returns immediately:
-```json
-{
-  "jobId": "background-job-id",
-  "syncRunId": "sync-run-id",
-  "pipelineId": "pipeline-id",
-  "status": "QUEUED",
-  "message": "Sync run queued for background execution."
-}
-```
-
-Worker execution updates:
-- `SyncRun` (`QUEUED -> RUNNING -> SUCCESS|FAILED`)
-- `BackgroundJob` (`QUEUED -> PROCESSING -> COMPLETED|FAILED`)
-- counters and timestamps
+Trigger types:
+- `MANUAL`
+- `WEBHOOK`
+- `SCHEDULED`
 
 ## Jobs
 - `GET /jobs/:id`
-
-Response shape:
-```json
-{
-  "id": "job-id",
-  "type": "SYNC_RUN | WEBHOOK_PROCESSING",
-  "status": "QUEUED",
-  "entityType": "sync_run",
-  "entityId": "sync-run-id",
-  "attempts": 0,
-  "lastError": null,
-  "metadataJson": {},
-  "createdAt": "2026-01-01T00:00:00.000Z",
-  "startedAt": null,
-  "finishedAt": null,
-  "durationMs": null
-}
-```
-
-Access rules:
-- `USER`: only jobs for owned pipelines/runs
-- `OPERATOR`, `ADMIN`: global visibility
 
 ## Webhooks
 - `POST /webhooks/:connectorId/events`
@@ -192,23 +85,5 @@ Access rules:
 - `POST /webhooks/events/:id/retry`
 - `POST /webhooks/events/:id/process`
 
-Security behavior:
-- Sensitive header redaction.
-- Idempotency support via `X-SyncBridge-Event-ID`.
-
-Processing behavior:
-- `QUEUE_MODE=sync`
-  - intake stores event and processes immediately.
-- `QUEUE_MODE=async`
-  - intake stores event, creates background job (`WEBHOOK_PROCESSING`), enqueues worker job, returns quickly.
-- Lifecycle statuses:
-  - `RECEIVED`, `PROCESSED`, `FAILED`, `IGNORED`
-- No active pipelines for connector:
-  - event becomes `IGNORED`.
-
 ## Dashboard
 - `GET /dashboard/summary`
-
-## Access Rules
-- `USER`: own resources only.
-- `OPERATOR`, `ADMIN`: global visibility where allowed.

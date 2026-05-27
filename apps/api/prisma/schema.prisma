@@ -44,6 +44,12 @@ enum SyncRunStatus {
   CANCELLED
 }
 
+enum SyncRunTriggerType {
+  MANUAL
+  WEBHOOK
+  SCHEDULED
+}
+
 enum WebhookEventStatus {
   RECEIVED
   PROCESSED
@@ -113,6 +119,13 @@ model SyncPipeline {
   targetName        String
   status            PipelineStatus @default(ACTIVE)
   mappingJson       Json
+  scheduleEnabled   Boolean        @default(false)
+  scheduleCron      String?
+  scheduleTimezone  String?
+  nextRunAt         DateTime?
+  lastRunAt         DateTime?
+  cursorJson        Json?
+  incrementalMode   Boolean        @default(false)
   ownerId           String
   createdAt         DateTime       @default(now())
   updatedAt         DateTime       @updatedAt
@@ -129,6 +142,7 @@ model SyncRun {
   id               String        @id @default(uuid())
   pipelineId       String
   status           SyncRunStatus @default(QUEUED)
+  triggerType      SyncRunTriggerType @default(MANUAL)
   recordsReceived  Int           @default(0)
   recordsProcessed Int           @default(0)
   recordsFailed    Int           @default(0)

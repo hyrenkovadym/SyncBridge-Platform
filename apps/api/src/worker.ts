@@ -4,6 +4,7 @@ import { NestFactory } from '@nestjs/core';
 import { WorkersModule } from './workers/workers.module';
 
 async function bootstrap() {
+  process.env.SYNCBRIDGE_PROCESS_ROLE = 'worker';
   const logger = new Logger('SyncBridgeWorker');
   const app = await NestFactory.createApplicationContext(WorkersModule);
 

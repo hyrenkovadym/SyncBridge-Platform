@@ -39,6 +39,9 @@ services:
       BULLMQ_REDIS_URL: redis://redis:6379
       BULLMQ_DEFAULT_ATTEMPTS: 3
       BULLMQ_BACKOFF_MS: 5000
+      SCHEDULER_ENABLED: false
+      SCHEDULER_POLL_INTERVAL_SECONDS: 30
+      SCHEDULER_LOCK_TTL_SECONDS: 60
       JWT_ACCESS_SECRET: replace_me_access_secret
       JWT_REFRESH_SECRET: replace_me_refresh_secret
       CORS_ORIGIN: http://localhost:3001
@@ -62,6 +65,9 @@ services:
       BULLMQ_REDIS_URL: redis://redis:6379
       BULLMQ_DEFAULT_ATTEMPTS: 3
       BULLMQ_BACKOFF_MS: 5000
+      SCHEDULER_ENABLED: true
+      SCHEDULER_POLL_INTERVAL_SECONDS: 30
+      SCHEDULER_LOCK_TTL_SECONDS: 60
       JWT_ACCESS_SECRET: replace_me_access_secret
       JWT_REFRESH_SECRET: replace_me_refresh_secret
       CORS_ORIGIN: http://localhost:3001

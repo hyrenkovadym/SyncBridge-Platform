@@ -1,45 +1,37 @@
 # SyncBridge Platform Roadmap
 
 ## Phase 1 (Completed)
-- Monorepo foundation
-- Core API modules and data model
-- JWT/RBAC baseline
-- Webhook intake baseline
+- Monorepo/API foundation
+- auth/RBAC/connectors/pipelines/webhook intake baseline
 
 ## Phase 2 (Completed)
-- Frontend pages wired to API
-- Refresh/logout token flow
-- Connector no-secrets policy
-- Connector/pipeline status endpoints
-- Dashboard summary and scoped list endpoints
+- Frontend wiring and auth session UX
+- refresh/logout
+- connector/pipeline status and validation hardening
 
 ## Phase 3 (Completed)
-- Dedicated transformation engine module
-- Safe nested path read/write utilities
-- Mapping format with types/defaults/required rules
-- Transformation preview endpoint
-- Mapping validation endpoint
-- Sync-run transformation integration with failure accounting
-- Transformation audit events
-- Frontend mapping preview workflow
+- transformation engine
+- mapping validation + preview
+- safe path utilities
 
 ## Phase 4 (Completed)
-- BullMQ + Redis background sync jobs
-- Worker process separation
-- Retry/failure strategy via attempts/backoff and safe job status tracking
+- BullMQ sync-run background jobs
+- worker process + job status APIs
 
 ## Phase 5 (Completed)
-- Webhook processing queue (`webhooks`) and worker processor
-- Webhook lifecycle status handling (`RECEIVED`, `PROCESSED`, `FAILED`, `IGNORED`)
-- Retry/manual process endpoints
-- Webhook background job visibility endpoints
-- Webhook-to-pipeline sync run orchestration using transformation engine
+- webhook processing queue/worker
+- webhook lifecycle + retry/manual processing
 
-## Phase 6
-- Scheduler and incremental sync checkpoints
+## Phase 6 (Completed)
+- scheduler endpoints and polling foundation
+- scheduled sync enqueue flow
+- incremental cursor/checkpoint foundation
+- run trigger-type tracking (`MANUAL`, `WEBHOOK`, `SCHEDULED`)
 
-## Phase 7
-- Observability/security hardening
+## Phase 7 (Next)
+- observability and security polish
+- metrics/alerts, tighter audit reporting, operational hardening
 
-## Phase 8
-- Portfolio release and production-readiness pass
+## Phase 8 (Future)
+- production-readiness pass
+- portfolio/demo packaging

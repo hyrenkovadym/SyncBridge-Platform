@@ -7,6 +7,7 @@ import {
   ConnectorType,
   PipelineStatus,
   SyncRunStatus,
+  SyncRunTriggerType,
   UserRole,
   WebhookEventStatus,
 } from '@prisma/client';
@@ -49,6 +50,13 @@ type PipelineEntity = {
   targetName: string;
   status: PipelineStatus;
   mappingJson: Record<string, unknown>;
+  scheduleEnabled: boolean;
+  scheduleCron: string | null;
+  scheduleTimezone: string | null;
+  nextRunAt: Date | null;
+  lastRunAt: Date | null;
+  cursorJson: Record<string, unknown> | null;
+  incrementalMode: boolean;
   ownerId: string;
   createdAt: Date;
   updatedAt: Date;
@@ -58,6 +66,7 @@ type SyncRunEntity = {
   id: string;
   pipelineId: string;
   status: SyncRunStatus;
+  triggerType: SyncRunTriggerType;
   recordsReceived: number;
   recordsProcessed: number;
   recordsFailed: number;
@@ -355,13 +364,20 @@ export class InMemoryPrismaService {
   syncPipeline = {
     create: async (args: { data: Partial<PipelineEntity> }) => {
       const entity: PipelineEntity = {
-        id: randomUUID(),
+        id: String(args.data.id ?? randomUUID()),
         name: String(args.data.name),
         description: (args.data.description as string | null) ?? null,
         sourceConnectorId: String(args.data.sourceConnectorId),
         targetName: String(args.data.targetName),
         status: (args.data.status as PipelineStatus) ?? PipelineStatus.ACTIVE,
         mappingJson: (args.data.mappingJson as Record<string, unknown>) ?? {},
+        scheduleEnabled: Boolean(args.data.scheduleEnabled ?? false),
+        scheduleCron: (args.data.scheduleCron as string | null) ?? null,
+        scheduleTimezone: (args.data.scheduleTimezone as string | null) ?? null,
+        nextRunAt: (args.data.nextRunAt as Date | null) ?? null,
+        lastRunAt: (args.data.lastRunAt as Date | null) ?? null,
+        cursorJson: (args.data.cursorJson as Record<string, unknown> | null) ?? null,
+        incrementalMode: Boolean(args.data.incrementalMode ?? false),
         ownerId: String(args.data.ownerId),
         createdAt: new Date(),
         updatedAt: new Date(),
@@ -371,8 +387,15 @@ export class InMemoryPrismaService {
     },
 
     findMany: async (args: {
-      where?: { ownerId?: string; sourceConnectorId?: string; status?: PipelineStatus };
-      orderBy?: { createdAt: 'asc' | 'desc' };
+      where?: {
+        ownerId?: string;
+        sourceConnectorId?: string;
+        status?: PipelineStatus;
+        scheduleEnabled?: boolean;
+        scheduleCron?: { not?: string | null };
+        nextRunAt?: { lte?: Date };
+      };
+      orderBy?: { createdAt?: 'asc' | 'desc'; nextRunAt?: 'asc' | 'desc' };
       select?: Record<string, boolean>;
     }) => {
       let items = [...this.pipelines];
@@ -385,7 +408,25 @@ export class InMemoryPrismaService {
       if (args.where?.status) {
         items = items.filter((item) => item.status === args.where?.status);
       }
-      sortByDate(items, 'createdAt', args.orderBy?.createdAt ?? 'desc');
+      if (args.where?.scheduleEnabled !== undefined) {
+        items = items.filter((item) => item.scheduleEnabled === args.where?.scheduleEnabled);
+      }
+      if (args.where?.scheduleCron?.not === null) {
+        items = items.filter((item) => item.scheduleCron !== null);
+      }
+      if (args.where?.nextRunAt?.lte) {
+        const lte = args.where.nextRunAt.lte;
+        items = items.filter((item) => item.nextRunAt !== null && item.nextRunAt <= lte);
+      }
+      if (args.orderBy?.nextRunAt) {
+        items.sort((a, b) => {
+          const aTime = a.nextRunAt ? a.nextRunAt.getTime() : Number.MAX_SAFE_INTEGER;
+          const bTime = b.nextRunAt ? b.nextRunAt.getTime() : Number.MAX_SAFE_INTEGER;
+          return args.orderBy?.nextRunAt === 'asc' ? aTime - bTime : bTime - aTime;
+        });
+      } else {
+        sortByDate(items, 'createdAt', args.orderBy?.createdAt ?? 'desc');
+      }
       if (args.select) {
         return items.map((item) => selectFields(item, args.select));
       }
@@ -425,6 +466,7 @@ export class InMemoryPrismaService {
         id: randomUUID(),
         pipelineId: String(args.data.pipelineId),
         status: (args.data.status as SyncRunStatus) ?? SyncRunStatus.QUEUED,
+        triggerType: (args.data.triggerType as SyncRunTriggerType) ?? SyncRunTriggerType.MANUAL,
         recordsReceived: Number(args.data.recordsReceived ?? 0),
         recordsProcessed: Number(args.data.recordsProcessed ?? 0),
         recordsFailed: Number(args.data.recordsFailed ?? 0),
@@ -453,7 +495,7 @@ export class InMemoryPrismaService {
     findMany: async (args: {
       where?: {
         pipelineId?: string | { in: string[] };
-        status?: SyncRunStatus;
+        status?: SyncRunStatus | { in: SyncRunStatus[] };
       };
       include?: {
         pipeline?:
@@ -475,8 +517,12 @@ export class InMemoryPrismaService {
         items = items.filter((item) => pipelineIdFilter.in.includes(item.pipelineId));
       }
 
-      if (args.where?.status) {
+      if (typeof args.where?.status === 'string') {
         items = items.filter((item) => item.status === args.where?.status);
+      } else if (args.where?.status && Array.isArray(args.where.status.in)) {
+        items = items.filter((item) =>
+          (args.where?.status as { in: SyncRunStatus[] }).in.includes(item.status),
+        );
       }
 
       sortByDate(items, 'createdAt', args.orderBy?.createdAt ?? 'desc');
@@ -523,7 +569,7 @@ export class InMemoryPrismaService {
     count: async (args?: {
       where?: {
         pipelineId?: string | { in: string[] };
-        status?: SyncRunStatus;
+        status?: SyncRunStatus | { in: SyncRunStatus[] };
         id?: string;
       };
     }) => {
@@ -536,8 +582,10 @@ export class InMemoryPrismaService {
         items = items.filter((item) => pipelineIdFilter.in.includes(item.pipelineId));
       }
 
-      if (args?.where?.status) {
+      if (typeof args?.where?.status === 'string') {
         items = items.filter((item) => item.status === args.where?.status);
+      } else if (args?.where?.status && Array.isArray(args.where.status.in)) {
+        items = items.filter((item) => args.where && (args.where.status as { in: SyncRunStatus[] }).in.includes(item.status));
       }
 
       if (args?.where?.id) {

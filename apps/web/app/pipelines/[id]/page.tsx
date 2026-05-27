@@ -4,7 +4,12 @@ import { useParams } from 'next/navigation';
 import { useEffect, useMemo, useState } from 'react';
 
 import { ApiError, api } from '../../../lib/api';
-import { SyncPipeline, TransformationPreviewResponse } from '../../../lib/types';
+import {
+  PipelineSchedule,
+  SchedulerStatus,
+  SyncPipeline,
+  TransformationPreviewResponse,
+} from '../../../lib/types';
 
 const DEFAULT_SAMPLE_RAW = `{
   "contact": {
@@ -14,7 +19,9 @@ const DEFAULT_SAMPLE_RAW = `{
   "invoice": {
     "total": "42.50"
   },
-  "active": "true"
+  "active": "true",
+  "sequence": 1,
+  "updatedAt": "2026-01-01T00:00:00.000Z"
 }`;
 
 function formatJson(value: unknown) {
@@ -26,6 +33,8 @@ export default function PipelineDetailPage() {
   const pipelineId = params.id;
 
   const [pipeline, setPipeline] = useState<SyncPipeline | null>(null);
+  const [schedule, setSchedule] = useState<PipelineSchedule | null>(null);
+  const [schedulerStatus, setSchedulerStatus] = useState<SchedulerStatus | null>(null);
   const [mappingJsonText, setMappingJsonText] = useState('');
   const [sampleRawText, setSampleRawText] = useState(DEFAULT_SAMPLE_RAW);
   const [previewResponse, setPreviewResponse] = useState<TransformationPreviewResponse | null>(null);
@@ -34,6 +43,13 @@ export default function PipelineDetailPage() {
   const [isPreviewing, setIsPreviewing] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [runMessage, setRunMessage] = useState<string | null>(null);
+  const [ignoreCursor, setIgnoreCursor] = useState(false);
+  const [isSavingSchedule, setIsSavingSchedule] = useState(false);
+  const [scheduleEnabled, setScheduleEnabled] = useState(false);
+  const [scheduleCron, setScheduleCron] = useState('*/5 * * * *');
+  const [scheduleTimezone, setScheduleTimezone] = useState('UTC');
+  const [incrementalMode, setIncrementalMode] = useState(false);
+  const [scheduleMessage, setScheduleMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -41,9 +57,20 @@ export default function PipelineDetailPage() {
       setErrorMessage(null);
 
       try {
-        const result = await api.getPipeline(pipelineId);
-        setPipeline(result);
-        setMappingJsonText(formatJson(result.mappingJson));
+        const [pipelineResult, scheduleResult, schedulerStatusResult] = await Promise.all([
+          api.getPipeline(pipelineId),
+          api.getPipelineSchedule(pipelineId),
+          api.getSchedulerStatus(),
+        ]);
+
+        setPipeline(pipelineResult);
+        setMappingJsonText(formatJson(pipelineResult.mappingJson));
+        setSchedule(scheduleResult);
+        setSchedulerStatus(schedulerStatusResult);
+        setScheduleEnabled(scheduleResult.scheduleEnabled);
+        setScheduleCron(scheduleResult.scheduleCron ?? '*/5 * * * *');
+        setScheduleTimezone(scheduleResult.scheduleTimezone ?? 'UTC');
+        setIncrementalMode(scheduleResult.incrementalMode);
       } catch (error) {
         if (error instanceof ApiError) {
           setErrorMessage(error.message);
@@ -109,7 +136,9 @@ export default function PipelineDetailPage() {
     setErrorMessage(null);
 
     try {
-      const result = await api.runPipeline(pipeline.id);
+      const result = await api.runPipeline(pipeline.id, {
+        ignoreCursor,
+      });
       if ('jobId' in result) {
         setRunMessage(`Run queued (job ${result.jobId}). Waiting for completion...`);
         await pollJobUntilFinished(result.jobId);
@@ -127,6 +156,64 @@ export default function PipelineDetailPage() {
     }
   };
 
+  const triggerScheduledRun = async () => {
+    if (!pipeline) {
+      return;
+    }
+
+    setIsRunning(true);
+    setRunMessage(null);
+    setErrorMessage(null);
+
+    try {
+      const result = await api.triggerPipelineSchedule(pipeline.id);
+      if ('jobId' in result) {
+        setRunMessage(`Scheduled run queued (job ${result.jobId}). Waiting for completion...`);
+        await pollJobUntilFinished(result.jobId);
+      } else {
+        setRunMessage(`Scheduled run finished with status ${result.status}.`);
+      }
+    } catch (error) {
+      if (error instanceof ApiError) {
+        setErrorMessage(error.message);
+      } else {
+        setErrorMessage('Failed to trigger scheduled run.');
+      }
+    } finally {
+      setIsRunning(false);
+    }
+  };
+
+  const saveSchedule = async () => {
+    if (!pipeline) {
+      return;
+    }
+
+    setIsSavingSchedule(true);
+    setScheduleMessage(null);
+    setErrorMessage(null);
+    try {
+      const updated = await api.updatePipelineSchedule(pipeline.id, {
+        scheduleEnabled,
+        scheduleCron,
+        scheduleTimezone,
+        incrementalMode,
+      });
+      setSchedule(updated);
+      setScheduleMessage('Schedule saved.');
+      const latestSchedulerStatus = await api.getSchedulerStatus();
+      setSchedulerStatus(latestSchedulerStatus);
+    } catch (error) {
+      if (error instanceof ApiError) {
+        setErrorMessage(error.message);
+      } else {
+        setErrorMessage('Failed to save schedule.');
+      }
+    } finally {
+      setIsSavingSchedule(false);
+    }
+  };
+
   const pollJobUntilFinished = async (jobId: string, attempt = 0): Promise<void> => {
     if (attempt > 60) {
       setRunMessage(`Job ${jobId} is still running. Check /sync-runs for latest state.`);
@@ -136,6 +223,8 @@ export default function PipelineDetailPage() {
     const job = await api.getJob(jobId);
     if (job.status === 'COMPLETED') {
       setRunMessage(`Job ${jobId} completed.`);
+      const refreshedSchedule = await api.getPipelineSchedule(pipelineId);
+      setSchedule(refreshedSchedule);
       return;
     }
     if (job.status === 'FAILED') {
@@ -160,6 +249,78 @@ export default function PipelineDetailPage() {
             <strong>{pipeline.name}</strong> ({pipeline.status}) - target: {pipeline.targetName}
           </p>
 
+          {schedulerStatus ? (
+            <p>
+              Scheduler: {schedulerStatus.schedulerEnabled ? 'enabled' : 'disabled'} (
+              {schedulerStatus.processRole})
+            </p>
+          ) : null}
+
+          <div className="card">
+            <h3>Schedule</h3>
+            <label htmlFor="scheduleEnabled">
+              <input
+                id="scheduleEnabled"
+                type="checkbox"
+                checked={scheduleEnabled}
+                onChange={(event) => setScheduleEnabled(event.target.checked)}
+              />
+              Enable schedule
+            </label>
+
+            <label htmlFor="scheduleCron">
+              Cron
+              <input
+                id="scheduleCron"
+                value={scheduleCron}
+                onChange={(event) => setScheduleCron(event.target.value)}
+              />
+            </label>
+
+            <label htmlFor="scheduleTimezone">
+              Timezone
+              <input
+                id="scheduleTimezone"
+                value={scheduleTimezone}
+                onChange={(event) => setScheduleTimezone(event.target.value)}
+              />
+            </label>
+
+            <label htmlFor="incrementalMode">
+              <input
+                id="incrementalMode"
+                type="checkbox"
+                checked={incrementalMode}
+                onChange={(event) => setIncrementalMode(event.target.checked)}
+              />
+              Incremental mode
+            </label>
+
+            <div className="row-actions">
+              <button type="button" onClick={() => void saveSchedule()} disabled={isSavingSchedule}>
+                {isSavingSchedule ? 'Saving...' : 'Save Schedule'}
+              </button>
+              <button type="button" onClick={() => void triggerScheduledRun()} disabled={isRunning}>
+                {isRunning ? 'Triggering...' : 'Trigger Scheduled Run'}
+              </button>
+            </div>
+
+            {schedule ? (
+              <p>
+                Next run: {schedule.nextRunAt ? new Date(schedule.nextRunAt).toLocaleString() : '-'} | Last
+                run: {schedule.lastRunAt ? new Date(schedule.lastRunAt).toLocaleString() : '-'}
+              </p>
+            ) : null}
+
+            {schedule?.cursorSummary ? (
+              <pre className="helper-block">{formatJson(schedule.cursorSummary)}</pre>
+            ) : (
+              <p>Cursor summary: none</p>
+            )}
+
+            {scheduleMessage ? <p>{scheduleMessage}</p> : null}
+          </div>
+
           <label htmlFor="mappingJson">
             Mapping JSON (read-only for preview against saved pipeline)
             <textarea
@@ -178,6 +339,16 @@ export default function PipelineDetailPage() {
               value={sampleRawText}
               onChange={(event) => setSampleRawText(event.target.value)}
             />
+          </label>
+
+          <label htmlFor="ignoreCursor">
+            <input
+              id="ignoreCursor"
+              type="checkbox"
+              checked={ignoreCursor}
+              onChange={(event) => setIgnoreCursor(event.target.checked)}
+            />
+            Ignore cursor for manual run
           </label>
 
           <button type="button" onClick={() => void runPreview()} disabled={!canPreview || isPreviewing}>

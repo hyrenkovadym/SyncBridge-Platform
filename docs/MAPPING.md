@@ -1,4 +1,4 @@
-# Mapping Engine Guide (Phase 3)
+# Mapping Engine Guide (Phase 6)
 
 ## Supported Mapping Format
 Primary mapping format:
@@ -78,6 +78,14 @@ Unsafe paths are rejected at mapping validation time.
 - Stores only valid transformed records
 - Updates run counters and failure status
 - In `QUEUE_MODE=async`, the same mapping logic executes in worker context.
+- Supports incremental cursor filtering when pipeline `incrementalMode=true`.
+- `ignoreCursor=true` can be passed for manual full reprocessing.
+
+## Trigger Types
+Each run tracks one trigger type:
+- `MANUAL`
+- `WEBHOOK`
+- `SCHEDULED`
 
 ## Current Limitations
 - No expression language / advanced computed formulas yet

@@ -1,4 +1,4 @@
-import { UserRole } from '@prisma/client';
+import { SyncRunTriggerType, UserRole } from '@prisma/client';
 
 export interface SyncRunMockRecordPayload {
   externalId?: string;
@@ -12,4 +12,6 @@ export interface ExecuteSyncRunJobPayload {
   requestedByUserId: string;
   requestedByRole: UserRole;
   mockRecords: SyncRunMockRecordPayload[];
+  ignoreCursor: boolean;
+  triggerType: SyncRunTriggerType;
 }

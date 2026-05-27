@@ -16,6 +16,8 @@ import {
   DashboardSummary,
   MappingValidationResponse,
   PaginatedResponse,
+  PipelineSchedule,
+  SchedulerStatus,
   SyncPipeline,
   SyncRun,
   SyncRunStatus,
@@ -238,6 +240,7 @@ export const api = {
     pipelineId: string,
     payload?: {
       mockRecords?: Array<{ externalId?: string; raw: Record<string, unknown> }>;
+      ignoreCursor?: boolean;
     },
   ) {
     return requestApi<SyncRun | AsyncRunQueuedResponse>(`/pipelines/${pipelineId}/runs`, {
@@ -267,6 +270,35 @@ export const api = {
 
   async listPipelineRuns(pipelineId: string) {
     return requestApi<SyncRun[]>(`/pipelines/${pipelineId}/runs`);
+  },
+
+  async getPipelineSchedule(pipelineId: string) {
+    return requestApi<PipelineSchedule>(`/pipelines/${pipelineId}/schedule`);
+  },
+
+  async updatePipelineSchedule(
+    pipelineId: string,
+    payload: {
+      scheduleEnabled?: boolean;
+      scheduleCron?: string;
+      scheduleTimezone?: string;
+      incrementalMode?: boolean;
+    },
+  ) {
+    return requestApi<PipelineSchedule>(`/pipelines/${pipelineId}/schedule`, {
+      method: 'PATCH',
+      body: payload,
+    });
+  },
+
+  async triggerPipelineSchedule(pipelineId: string) {
+    return requestApi<SyncRun | AsyncRunQueuedResponse>(`/pipelines/${pipelineId}/schedule/trigger`, {
+      method: 'POST',
+    });
+  },
+
+  async getSchedulerStatus() {
+    return requestApi<SchedulerStatus>('/scheduler/status');
   },
 
   async listSyncRuns(query?: { page?: number; limit?: number; status?: SyncRunStatus }) {

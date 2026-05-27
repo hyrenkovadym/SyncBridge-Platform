@@ -11,5 +11,6 @@ import { SyncRunsService } from './sync-runs.service';
   imports: [PipelinesModule, AuditModule, TransformationsModule, JobsModule],
   controllers: [SyncRunsController],
   providers: [SyncRunsService],
+  exports: [SyncRunsService],
 })
 export class SyncRunsModule {}

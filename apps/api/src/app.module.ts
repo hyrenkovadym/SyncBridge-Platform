@@ -9,6 +9,7 @@ import { HealthModule } from './health/health.module';
 import { JobsModule } from './jobs/jobs.module';
 import { PipelinesModule } from './pipelines/pipelines.module';
 import { PrismaModule } from './prisma/prisma.module';
+import { SchedulerModule } from './scheduler/scheduler.module';
 import { SyncRunsModule } from './sync-runs/sync-runs.module';
 import { UsersModule } from './users/users.module';
 import { WebhooksModule } from './webhooks/webhooks.module';
@@ -27,6 +28,7 @@ import { validateEnv } from './config/env.validation';
     AuthModule,
     ConnectorsModule,
     PipelinesModule,
+    SchedulerModule,
     JobsModule,
     WebhooksModule,
     SyncRunsModule,

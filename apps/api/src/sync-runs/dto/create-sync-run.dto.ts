@@ -1,6 +1,6 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsArray, IsObject, IsOptional, IsString, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
+import { IsArray, IsBoolean, IsObject, IsOptional, IsString, ValidateNested } from 'class-validator';
 
 class MockRecordDto {
   @ApiPropertyOptional({ example: 'external-record-1001' })
@@ -38,4 +38,13 @@ export class CreateSyncRunDto {
   @ValidateNested({ each: true })
   @Type(() => MockRecordDto)
   sampleRecords?: MockRecordDto[];
+
+  @ApiPropertyOptional({
+    description: 'When true, incremental cursor filtering is ignored for this run.',
+    default: false,
+  })
+  @IsOptional()
+  @IsBoolean()
+  @Type(() => Boolean)
+  ignoreCursor?: boolean;
 }

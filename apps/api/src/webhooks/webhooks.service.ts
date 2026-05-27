@@ -11,6 +11,7 @@ import {
   PipelineStatus,
   Prisma,
   SyncRunStatus,
+  SyncRunTriggerType,
   UserRole,
   WebhookEventStatus,
 } from '@prisma/client';
@@ -624,6 +625,7 @@ export class WebhooksService {
         data: {
           pipelineId: pipeline.id,
           status: SyncRunStatus.RUNNING,
+          triggerType: SyncRunTriggerType.WEBHOOK,
           recordsReceived: 0,
           recordsProcessed: 0,
           recordsFailed: 0,
@@ -642,6 +644,7 @@ export class WebhooksService {
           pipelineId: pipeline.id,
           source: 'webhook_event',
           webhookEventId: event.id,
+          triggerType: SyncRunTriggerType.WEBHOOK,
         },
       });
 
@@ -722,6 +725,12 @@ export class WebhooksService {
           finishedAt: new Date(),
         },
       });
+      await this.prisma.syncPipeline.update({
+        where: { id: pipelineId },
+        data: {
+          lastRunAt: new Date(),
+        },
+      });
 
       await this.auditService.log({
         action: 'transformation_failed',
@@ -747,6 +756,7 @@ export class WebhooksService {
           recordsReceived: 1,
           recordsProcessed: 0,
           recordsFailed: 1,
+          triggerType: SyncRunTriggerType.WEBHOOK,
         },
       });
 
@@ -771,6 +781,12 @@ export class WebhooksService {
           recordsFailed: 1,
           errorMessage: 'One or more records failed during processing.',
           finishedAt: new Date(),
+        },
+      });
+      await this.prisma.syncPipeline.update({
+        where: { id: pipelineId },
+        data: {
+          lastRunAt: new Date(),
         },
       });
 
@@ -798,6 +814,7 @@ export class WebhooksService {
           recordsReceived: 1,
           recordsProcessed: 0,
           recordsFailed: 1,
+          triggerType: SyncRunTriggerType.WEBHOOK,
         },
       });
 
@@ -829,6 +846,12 @@ export class WebhooksService {
         finishedAt: new Date(),
       },
     });
+    await this.prisma.syncPipeline.update({
+      where: { id: pipelineId },
+      data: {
+        lastRunAt: new Date(),
+      },
+    });
 
     await this.auditService.log({
       action: 'transformation_applied',
@@ -847,14 +870,15 @@ export class WebhooksService {
       entityType: 'sync_run',
       entityId: syncRunId,
       actor,
-      metadataJson: {
-        pipelineId,
-        webhookEventId: eventId,
-        recordsReceived: 1,
-        recordsProcessed: 1,
-        recordsFailed: 0,
-      },
-    });
+        metadataJson: {
+          pipelineId,
+          webhookEventId: eventId,
+          recordsReceived: 1,
+          recordsProcessed: 1,
+          recordsFailed: 0,
+          triggerType: SyncRunTriggerType.WEBHOOK,
+        },
+      });
 
     await this.auditService.log({
       action: 'synced_record_created',

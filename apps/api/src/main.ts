@@ -6,6 +6,7 @@ import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
+  process.env.SYNCBRIDGE_PROCESS_ROLE = process.env.SYNCBRIDGE_PROCESS_ROLE ?? 'api';
   const app = await NestFactory.create(AppModule);
   const configService = app.get(ConfigService);
 

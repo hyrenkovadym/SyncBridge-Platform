@@ -162,6 +162,8 @@ export default function PipelinesPage() {
                 <th>Source Connector</th>
                 <th>Target</th>
                 <th>Status</th>
+                <th>Schedule</th>
+                <th>Next Run</th>
                 <th>Updated</th>
                 <th>Actions</th>
               </tr>
@@ -175,6 +177,8 @@ export default function PipelinesPage() {
                   <td>{connectorNameMap[pipeline.sourceConnectorId] ?? pipeline.sourceConnectorId}</td>
                   <td>{pipeline.targetName}</td>
                   <td>{pipeline.status}</td>
+                  <td>{pipeline.scheduleEnabled ? pipeline.scheduleCron ?? '-' : 'Disabled'}</td>
+                  <td>{pipeline.nextRunAt ? new Date(pipeline.nextRunAt).toLocaleString() : '-'}</td>
                   <td>{new Date(pipeline.updatedAt).toLocaleString()}</td>
                   <td>
                     <div className="row-actions">
@@ -208,6 +212,35 @@ export default function PipelinesPage() {
                         disabled={updatingPipelineId === pipeline.id}
                       >
                         {updatingPipelineId === pipeline.id ? 'Saving...' : 'Save'}
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          setRunningPipelineId(pipeline.id);
+                          setErrorMessage(null);
+                          setRunMessage(null);
+                          try {
+                            const result = await api.triggerPipelineSchedule(pipeline.id);
+                            if ('jobId' in result) {
+                              setRunMessage(`Scheduled run queued (job ${result.jobId}). Waiting for completion...`);
+                              void pollJobUntilFinished(result.jobId);
+                            } else {
+                              setRunMessage(`Scheduled run finished with status ${result.status}.`);
+                            }
+                          } catch (error) {
+                            if (error instanceof ApiError) {
+                              setErrorMessage(error.message);
+                            } else {
+                              setErrorMessage('Failed to trigger scheduled run.');
+                            }
+                          } finally {
+                            setRunningPipelineId(null);
+                          }
+                        }}
+                        disabled={runningPipelineId === pipeline.id}
+                      >
+                        {runningPipelineId === pipeline.id ? 'Triggering...' : 'Trigger Schedule'}
                       </button>
                     </div>
                   </td>
