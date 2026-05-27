@@ -77,6 +77,7 @@ Unsafe paths are rejected at mapping validation time.
 - Applies the same transformation engine used by preview
 - Stores only valid transformed records
 - Updates run counters and failure status
+- In `QUEUE_MODE=async`, the same mapping logic executes in worker context.
 
 ## Current Limitations
 - No expression language / advanced computed formulas yet

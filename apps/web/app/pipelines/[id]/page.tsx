@@ -32,6 +32,8 @@ export default function PipelineDetailPage() {
   const [loading, setLoading] = useState(true);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isPreviewing, setIsPreviewing] = useState(false);
+  const [isRunning, setIsRunning] = useState(false);
+  const [runMessage, setRunMessage] = useState<string | null>(null);
 
   useEffect(() => {
     const load = async () => {
@@ -97,6 +99,54 @@ export default function PipelineDetailPage() {
     }
   };
 
+  const runPipeline = async () => {
+    if (!pipeline) {
+      return;
+    }
+
+    setIsRunning(true);
+    setRunMessage(null);
+    setErrorMessage(null);
+
+    try {
+      const result = await api.runPipeline(pipeline.id);
+      if ('jobId' in result) {
+        setRunMessage(`Run queued (job ${result.jobId}). Waiting for completion...`);
+        await pollJobUntilFinished(result.jobId);
+      } else {
+        setRunMessage(`Run finished with status ${result.status}.`);
+      }
+    } catch (error) {
+      if (error instanceof ApiError) {
+        setErrorMessage(error.message);
+      } else {
+        setErrorMessage('Failed to run pipeline.');
+      }
+    } finally {
+      setIsRunning(false);
+    }
+  };
+
+  const pollJobUntilFinished = async (jobId: string, attempt = 0): Promise<void> => {
+    if (attempt > 60) {
+      setRunMessage(`Job ${jobId} is still running. Check /sync-runs for latest state.`);
+      return;
+    }
+
+    const job = await api.getJob(jobId);
+    if (job.status === 'COMPLETED') {
+      setRunMessage(`Job ${jobId} completed.`);
+      return;
+    }
+    if (job.status === 'FAILED') {
+      setRunMessage(`Job ${jobId} failed.`);
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await pollJobUntilFinished(jobId, attempt + 1);
+  };
+
   return (
     <section className="card">
       <h2>Pipeline Transformation Preview</h2>
@@ -133,6 +183,12 @@ export default function PipelineDetailPage() {
           <button type="button" onClick={() => void runPreview()} disabled={!canPreview || isPreviewing}>
             {isPreviewing ? 'Previewing...' : 'Preview Transformation'}
           </button>
+
+          <button type="button" onClick={() => void runPipeline()} disabled={isRunning}>
+            {isRunning ? 'Queueing...' : 'Run Pipeline'}
+          </button>
+
+          {runMessage ? <p>{runMessage}</p> : null}
 
           {previewResponse ? (
             <div className="preview-output">

@@ -51,6 +51,17 @@ enum WebhookEventStatus {
   IGNORED
 }
 
+enum BackgroundJobType {
+  SYNC_RUN
+}
+
+enum BackgroundJobStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
 model User {
   id            String         @id @default(uuid())
   email         String         @unique
@@ -128,6 +139,23 @@ model SyncRun {
   syncedRecords    SyncedRecord[]
 
   @@index([pipelineId])
+  @@index([status])
+}
+
+model BackgroundJob {
+  id           String              @id @default(uuid())
+  type         BackgroundJobType
+  status       BackgroundJobStatus @default(QUEUED)
+  entityType   String
+  entityId     String
+  attempts     Int                 @default(0)
+  lastError    String?
+  metadataJson Json?
+  createdAt    DateTime            @default(now())
+  startedAt    DateTime?
+  finishedAt   DateTime?
+  durationMs   Int?
+  @@index([entityType, entityId])
   @@index([status])
 }
 

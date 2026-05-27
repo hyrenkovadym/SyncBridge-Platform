@@ -1,4 +1,4 @@
-# SyncBridge API Reference (Phase 3)
+# SyncBridge API Reference (Phase 4)
 
 Base URL:
 - `http://localhost:4100/api`
@@ -117,6 +117,7 @@ Response:
 - `GET /pipelines/:id/runs`
 - `GET /sync-runs/:id`
 - `GET /sync-runs`
+- `GET /sync-runs/:id/job`
 
 Run creation (`POST /pipelines/:id/runs`) accepts:
 ```json
@@ -132,11 +133,56 @@ Run creation (`POST /pipelines/:id/runs`) accepts:
 }
 ```
 
-Behavior:
-- Uses transformation engine per record.
+Behavior in `QUEUE_MODE=sync`:
+- Uses transformation engine per record immediately.
 - Persists `SyncedRecord` only for valid transformed records.
 - Updates run counters (`recordsReceived`, `recordsProcessed`, `recordsFailed`).
 - Run status becomes `FAILED` if at least one record fails transformation.
+
+Behavior in `QUEUE_MODE=async`:
+- Creates `SyncRun` in `QUEUED` state.
+- Creates `BackgroundJob` in `QUEUED` state.
+- Enqueues `execute-sync-run` job in BullMQ queue `sync-runs`.
+- Returns immediately:
+```json
+{
+  "jobId": "background-job-id",
+  "syncRunId": "sync-run-id",
+  "pipelineId": "pipeline-id",
+  "status": "QUEUED",
+  "message": "Sync run queued for background execution."
+}
+```
+
+Worker execution updates:
+- `SyncRun` (`QUEUED -> RUNNING -> SUCCESS|FAILED`)
+- `BackgroundJob` (`QUEUED -> PROCESSING -> COMPLETED|FAILED`)
+- counters and timestamps
+
+## Jobs
+- `GET /jobs/:id`
+
+Response shape:
+```json
+{
+  "id": "job-id",
+  "type": "SYNC_RUN",
+  "status": "QUEUED",
+  "entityType": "sync_run",
+  "entityId": "sync-run-id",
+  "attempts": 0,
+  "lastError": null,
+  "metadataJson": {},
+  "createdAt": "2026-01-01T00:00:00.000Z",
+  "startedAt": null,
+  "finishedAt": null,
+  "durationMs": null
+}
+```
+
+Access rules:
+- `USER`: only jobs for owned pipelines/runs
+- `OPERATOR`, `ADMIN`: global visibility
 
 ## Webhooks
 - `POST /webhooks/:connectorId/events`

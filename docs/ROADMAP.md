@@ -23,10 +23,10 @@
 - Transformation audit events
 - Frontend mapping preview workflow
 
-## Phase 4 (Next)
+## Phase 4 (Completed)
 - BullMQ + Redis background sync jobs
 - Worker process separation
-- Retry strategy and dead-letter patterns
+- Retry/failure strategy via attempts/backoff and safe job status tracking
 
 ## Phase 5
 - Webhook processing pipeline orchestration

@@ -6,6 +6,7 @@ import { AuditModule } from './audit/audit.module';
 import { ConnectorsModule } from './connectors/connectors.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { HealthModule } from './health/health.module';
+import { JobsModule } from './jobs/jobs.module';
 import { PipelinesModule } from './pipelines/pipelines.module';
 import { PrismaModule } from './prisma/prisma.module';
 import { SyncRunsModule } from './sync-runs/sync-runs.module';
@@ -26,6 +27,7 @@ import { validateEnv } from './config/env.validation';
     AuthModule,
     ConnectorsModule,
     PipelinesModule,
+    JobsModule,
     WebhooksModule,
     SyncRunsModule,
     DashboardModule,

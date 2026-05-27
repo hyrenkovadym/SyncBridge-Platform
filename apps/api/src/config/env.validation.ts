@@ -13,6 +13,11 @@ function getStringValue(key: string, value: unknown, fallback: string) {
 }
 
 export function validateEnv(config: Record<string, unknown>) {
+  const queueModeRaw = getStringValue('QUEUE_MODE', config.QUEUE_MODE, 'sync').toLowerCase();
+  if (queueModeRaw !== 'sync' && queueModeRaw !== 'async') {
+    throw new Error('Environment variable QUEUE_MODE must be either "sync" or "async"');
+  }
+
   const normalizedConfig = {
     NODE_ENV: getStringValue('NODE_ENV', config.NODE_ENV, 'development'),
     PORT: getStringValue('PORT', config.PORT, '4100'),
@@ -22,6 +27,18 @@ export function validateEnv(config: Record<string, unknown>) {
       'postgresql://syncbridge:syncbridge@localhost:5433/syncbridge?schema=public',
     ),
     REDIS_URL: getStringValue('REDIS_URL', config.REDIS_URL, 'redis://localhost:6380'),
+    QUEUE_MODE: queueModeRaw,
+    BULLMQ_REDIS_URL: getStringValue(
+      'BULLMQ_REDIS_URL',
+      config.BULLMQ_REDIS_URL,
+      getStringValue('REDIS_URL', config.REDIS_URL, 'redis://localhost:6380'),
+    ),
+    BULLMQ_DEFAULT_ATTEMPTS: getStringValue(
+      'BULLMQ_DEFAULT_ATTEMPTS',
+      config.BULLMQ_DEFAULT_ATTEMPTS,
+      '3',
+    ),
+    BULLMQ_BACKOFF_MS: getStringValue('BULLMQ_BACKOFF_MS', config.BULLMQ_BACKOFF_MS, '5000'),
     JWT_ACCESS_SECRET: getStringValue(
       'JWT_ACCESS_SECRET',
       config.JWT_ACCESS_SECRET,
@@ -38,6 +55,16 @@ export function validateEnv(config: Record<string, unknown>) {
   const port = Number(normalizedConfig.PORT);
   if (!Number.isInteger(port) || port <= 0) {
     throw new Error('Environment variable PORT must be a valid positive integer');
+  }
+
+  const defaultAttempts = Number(normalizedConfig.BULLMQ_DEFAULT_ATTEMPTS);
+  if (!Number.isInteger(defaultAttempts) || defaultAttempts <= 0) {
+    throw new Error('Environment variable BULLMQ_DEFAULT_ATTEMPTS must be a valid positive integer');
+  }
+
+  const backoffMs = Number(normalizedConfig.BULLMQ_BACKOFF_MS);
+  if (!Number.isInteger(backoffMs) || backoffMs < 0) {
+    throw new Error('Environment variable BULLMQ_BACKOFF_MS must be a valid non-negative integer');
   }
 
   return {

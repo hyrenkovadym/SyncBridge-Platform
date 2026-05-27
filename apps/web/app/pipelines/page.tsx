@@ -16,6 +16,7 @@ export default function PipelinesPage() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [runningPipelineId, setRunningPipelineId] = useState<string | null>(null);
   const [updatingPipelineId, setUpdatingPipelineId] = useState<string | null>(null);
+  const [runMessage, setRunMessage] = useState<string | null>(null);
 
   useEffect(() => {
     void loadData();
@@ -57,8 +58,16 @@ export default function PipelinesPage() {
   const runPipeline = async (pipelineId: string) => {
     setRunningPipelineId(pipelineId);
     setErrorMessage(null);
+    setRunMessage(null);
     try {
-      await api.runPipeline(pipelineId);
+      const result = await api.runPipeline(pipelineId);
+
+      if ('jobId' in result) {
+        setRunMessage(`Run queued (job ${result.jobId}). Waiting for completion...`);
+        void pollJobUntilFinished(result.jobId);
+      } else {
+        setRunMessage(`Run finished with status ${result.status}.`);
+      }
     } catch (error) {
       if (error instanceof ApiError) {
         setErrorMessage(error.message);
@@ -68,6 +77,40 @@ export default function PipelinesPage() {
     } finally {
       setRunningPipelineId(null);
     }
+  };
+
+  const pollJobUntilFinished = async (jobId: string, attempt = 0): Promise<void> => {
+    if (attempt > 60) {
+      setRunMessage(`Job ${jobId} is still running. Check /sync-runs for latest state.`);
+      return;
+    }
+
+    try {
+      const job = await api.getJob(jobId);
+      if (job.status === 'COMPLETED') {
+        setRunMessage(`Job ${jobId} completed.`);
+        await loadData();
+        return;
+      }
+
+      if (job.status === 'FAILED') {
+        setRunMessage(`Job ${jobId} failed.`);
+        await loadData();
+        return;
+      }
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 404) {
+        setRunMessage(`Job ${jobId} not found.`);
+      } else if (error instanceof ApiError) {
+        setErrorMessage(error.message);
+      } else {
+        setErrorMessage('Failed to poll job status.');
+      }
+      return;
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 2000));
+    await pollJobUntilFinished(jobId, attempt + 1);
   };
 
   const updateStatus = async (pipelineId: string) => {
@@ -104,6 +147,7 @@ export default function PipelinesPage() {
 
       {loading ? <section className="card">Loading pipelines...</section> : null}
       {errorMessage ? <section className="card error-card">{errorMessage}</section> : null}
+      {runMessage ? <section className="card">{runMessage}</section> : null}
 
       {!loading && pipelines.length === 0 ? (
         <section className="card">No pipelines yet. Create one to run sync simulations.</section>

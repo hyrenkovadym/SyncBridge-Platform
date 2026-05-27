@@ -15,6 +15,9 @@ process.env.REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6380';
 process.env.JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET ?? 'test_access_secret';
 process.env.JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET ?? 'test_refresh_secret';
 process.env.CORS_ORIGIN = process.env.CORS_ORIGIN ?? 'http://localhost:3001';
+process.env.BULLMQ_REDIS_URL = process.env.BULLMQ_REDIS_URL ?? 'redis://localhost:6380';
+process.env.BULLMQ_DEFAULT_ATTEMPTS = process.env.BULLMQ_DEFAULT_ATTEMPTS ?? '3';
+process.env.BULLMQ_BACKOFF_MS = process.env.BULLMQ_BACKOFF_MS ?? '5000';
 
 describe('SyncBridge API (e2e)', () => {
   let app: INestApplication;
@@ -33,6 +36,8 @@ describe('SyncBridge API (e2e)', () => {
   };
 
   beforeAll(async () => {
+    process.env.QUEUE_MODE = 'sync';
+
     const prismaMock = new InMemoryPrismaService();
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],

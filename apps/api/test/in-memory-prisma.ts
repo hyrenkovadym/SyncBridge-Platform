@@ -1,6 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
 import {
+  BackgroundJobStatus,
+  BackgroundJobType,
   ConnectorStatus,
   ConnectorType,
   PipelineStatus,
@@ -101,6 +103,21 @@ type AuditLogEntity = {
   createdAt: Date;
 };
 
+type BackgroundJobEntity = {
+  id: string;
+  type: BackgroundJobType;
+  status: BackgroundJobStatus;
+  entityType: string;
+  entityId: string;
+  attempts: number;
+  lastError: string | null;
+  metadataJson: Record<string, unknown> | null;
+  createdAt: Date;
+  startedAt: Date | null;
+  finishedAt: Date | null;
+  durationMs: number | null;
+};
+
 function cloneValue<T>(value: T): T {
   return structuredClone(value);
 }
@@ -153,6 +170,7 @@ export class InMemoryPrismaService {
   private syncedRecords: SyncedRecordEntity[] = [];
   private webhookEvents: WebhookEventEntity[] = [];
   private auditLogs: AuditLogEntity[] = [];
+  private backgroundJobs: BackgroundJobEntity[] = [];
 
   reset() {
     this.users = [];
@@ -163,6 +181,7 @@ export class InMemoryPrismaService {
     this.syncedRecords = [];
     this.webhookEvents = [];
     this.auditLogs = [];
+    this.backgroundJobs = [];
   }
 
   user = {
@@ -733,6 +752,79 @@ export class InMemoryPrismaService {
       };
       this.auditLogs.push(entity);
       return cloneValue(entity);
+    },
+  };
+
+  backgroundJob = {
+    create: async (args: { data: Partial<BackgroundJobEntity> }) => {
+      const entity: BackgroundJobEntity = {
+        id: randomUUID(),
+        type: (args.data.type as BackgroundJobType) ?? BackgroundJobType.SYNC_RUN,
+        status: (args.data.status as BackgroundJobStatus) ?? BackgroundJobStatus.QUEUED,
+        entityType: String(args.data.entityType),
+        entityId: String(args.data.entityId),
+        attempts: Number(args.data.attempts ?? 0),
+        lastError: (args.data.lastError as string | null) ?? null,
+        metadataJson: (args.data.metadataJson as Record<string, unknown> | null) ?? null,
+        createdAt: new Date(),
+        startedAt: (args.data.startedAt as Date | null) ?? null,
+        finishedAt: (args.data.finishedAt as Date | null) ?? null,
+        durationMs: (args.data.durationMs as number | null) ?? null,
+      };
+      this.backgroundJobs.push(entity);
+      return cloneValue(entity);
+    },
+
+    findUnique: async (args: { where: { id: string } }) => {
+      const entity = this.backgroundJobs.find((item) => item.id === args.where.id);
+      return entity ? cloneValue(entity) : null;
+    },
+
+    findFirst: async (args: {
+      where?: { entityType?: string; entityId?: string };
+      orderBy?: { createdAt: 'asc' | 'desc' };
+    }) => {
+      let items = [...this.backgroundJobs];
+      if (args.where?.entityType) {
+        items = items.filter((item) => item.entityType === args.where?.entityType);
+      }
+      if (args.where?.entityId) {
+        items = items.filter((item) => item.entityId === args.where?.entityId);
+      }
+
+      sortByDate(items, 'createdAt', args.orderBy?.createdAt ?? 'desc');
+      return items.length > 0 ? cloneValue(items[0]) : null;
+    },
+
+    findMany: async (args?: {
+      where?: { entityType?: string; entityId?: string; status?: BackgroundJobStatus };
+      orderBy?: { createdAt: 'asc' | 'desc' };
+    }) => {
+      let items = [...this.backgroundJobs];
+      if (args?.where?.entityType) {
+        items = items.filter((item) => item.entityType === args.where?.entityType);
+      }
+      if (args?.where?.entityId) {
+        items = items.filter((item) => item.entityId === args.where?.entityId);
+      }
+      if (args?.where?.status) {
+        items = items.filter((item) => item.status === args.where?.status);
+      }
+      sortByDate(items, 'createdAt', args?.orderBy?.createdAt ?? 'desc');
+      return cloneValue(items);
+    },
+
+    update: async (args: { where: { id: string }; data: Partial<BackgroundJobEntity> }) => {
+      const index = this.backgroundJobs.findIndex((item) => item.id === args.where.id);
+      if (index < 0) {
+        throw new Error('Background job not found');
+      }
+      const updated: BackgroundJobEntity = {
+        ...this.backgroundJobs[index],
+        ...args.data,
+      };
+      this.backgroundJobs[index] = updated;
+      return cloneValue(updated);
     },
   };
 

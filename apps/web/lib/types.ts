@@ -14,6 +14,8 @@ export type ConnectorStatus = 'ACTIVE' | 'PAUSED' | 'ERROR';
 export type PipelineStatus = 'ACTIVE' | 'PAUSED' | 'ARCHIVED';
 export type SyncRunStatus = 'QUEUED' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
 export type WebhookEventStatus = 'RECEIVED' | 'PROCESSED' | 'FAILED' | 'IGNORED';
+export type BackgroundJobType = 'SYNC_RUN';
+export type BackgroundJobStatus = 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
 
 export interface ApiErrorPayload {
   statusCode: number;
@@ -87,6 +89,29 @@ export interface SyncRun {
     recordsProcessed: number;
     recordsFailed: number;
   };
+}
+
+export interface AsyncRunQueuedResponse {
+  jobId: string;
+  syncRunId: string;
+  pipelineId: string;
+  status: 'QUEUED';
+  message: string;
+}
+
+export interface BackgroundJob {
+  id: string;
+  type: BackgroundJobType;
+  status: BackgroundJobStatus;
+  entityType: string;
+  entityId: string;
+  attempts: number;
+  lastError: string | null;
+  metadataJson: Record<string, unknown>;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  durationMs: number | null;
 }
 
 export interface WebhookEvent {

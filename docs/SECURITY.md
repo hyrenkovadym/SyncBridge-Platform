@@ -1,4 +1,4 @@
-# SyncBridge Platform Security Notes (Phase 3)
+# SyncBridge Platform Security Notes (Phase 4)
 
 ## Secrets Policy
 - No real credentials in repo.
@@ -20,6 +20,7 @@
 ## Data Handling
 - Preview endpoint does not persist sync runs or records.
 - Transformation audit metadata includes counts and identifiers, not full raw payload dumps.
+- Background job endpoints expose sanitized status metadata only (no stack traces).
 
 ## Auth and RBAC
 - Access token + refresh token flow in place.
@@ -33,9 +34,9 @@
 ## Current Limitations
 - No cryptographic webhook signature verification yet.
 - No field-level data masking in persisted payloads yet.
-- No asynchronous isolation layer for transformation execution yet.
+- Queue payloads are internal to Redis and should be protected by network boundaries.
 
 ## Next Security Priorities
-- Queue isolation and retry controls in Phase 4.
 - Signature verification and replay windows for webhook providers.
 - Extended observability and alerting around transformation failures.
+- Per-tenant queue isolation and stricter worker runtime hardening.

@@ -7,7 +7,9 @@ import {
   updateStoredTokens,
 } from './auth';
 import {
+  AsyncRunQueuedResponse,
   AuthResponse,
+  BackgroundJob,
   Connector,
   ConnectorStatus,
   ConnectorType,
@@ -237,7 +239,7 @@ export const api = {
       mockRecords?: Array<{ externalId?: string; raw: Record<string, unknown> }>;
     },
   ) {
-    return requestApi<SyncRun>(`/pipelines/${pipelineId}/runs`, {
+    return requestApi<SyncRun | AsyncRunQueuedResponse>(`/pipelines/${pipelineId}/runs`, {
       method: 'POST',
       body: payload ?? {},
     });
@@ -279,6 +281,14 @@ export const api = {
     }
     const querySuffix = search.size > 0 ? `?${search.toString()}` : '';
     return requestApi<PaginatedResponse<SyncRun>>(`/sync-runs${querySuffix}`);
+  },
+
+  async getJob(jobId: string) {
+    return requestApi<BackgroundJob>(`/jobs/${jobId}`);
+  },
+
+  async getSyncRunJob(syncRunId: string) {
+    return requestApi<BackgroundJob>(`/sync-runs/${syncRunId}/job`);
   },
 
   async listWebhookEvents(query?: { page?: number; limit?: number }) {
