@@ -7,4 +7,7 @@ export class WebhookEventResponseDto {
 
   @ApiProperty({ enum: WebhookEventStatus })
   status!: WebhookEventStatus;
+
+  @ApiProperty({ required: false, default: false })
+  duplicate?: boolean;
 }

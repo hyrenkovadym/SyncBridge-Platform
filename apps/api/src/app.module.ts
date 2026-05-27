@@ -4,6 +4,7 @@ import { ConfigModule } from '@nestjs/config';
 import { AuthModule } from './auth/auth.module';
 import { AuditModule } from './audit/audit.module';
 import { ConnectorsModule } from './connectors/connectors.module';
+import { DashboardModule } from './dashboard/dashboard.module';
 import { HealthModule } from './health/health.module';
 import { PipelinesModule } from './pipelines/pipelines.module';
 import { PrismaModule } from './prisma/prisma.module';
@@ -27,6 +28,7 @@ import { validateEnv } from './config/env.validation';
     PipelinesModule,
     WebhooksModule,
     SyncRunsModule,
+    DashboardModule,
     HealthModule,
   ],
 })

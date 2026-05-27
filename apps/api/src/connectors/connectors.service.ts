@@ -1,9 +1,13 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
-import { Connector, Prisma, UserRole } from '@prisma/client';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { Connector, ConnectorStatus, Prisma, UserRole } from '@prisma/client';
 
 import { AuditService } from '../audit/audit.service';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PrismaService } from '../prisma/prisma.service';
+import {
+  CONNECTOR_SECRET_POLICY_ERROR,
+  hasForbiddenConfigKeys,
+} from './connector-config.policy';
 import { CreateConnectorDto } from './dto/create-connector.dto';
 import { UpdateConnectorDto } from './dto/update-connector.dto';
 
@@ -15,6 +19,8 @@ export class ConnectorsService {
   ) {}
 
   async create(dto: CreateConnectorDto, user: AuthenticatedUser) {
+    this.assertSafeConfig(dto.configJson);
+
     const connector = await this.prisma.connector.create({
       data: {
         name: dto.name.trim(),
@@ -56,7 +62,11 @@ export class ConnectorsService {
     const connector = await this.getById(id);
     this.assertCanAccess(connector, user);
 
-    return this.prisma.connector.update({
+    if (dto.configJson) {
+      this.assertSafeConfig(dto.configJson);
+    }
+
+    const updated = await this.prisma.connector.update({
       where: { id },
       data: {
         ...(dto.name ? { name: dto.name.trim() } : {}),
@@ -64,6 +74,44 @@ export class ConnectorsService {
         ...(dto.configJson ? { configJson: dto.configJson as Prisma.InputJsonValue } : {}),
       },
     });
+
+    if (dto.status && dto.status !== connector.status) {
+      await this.auditService.log({
+        action: 'connector_status_updated',
+        entityType: 'connector',
+        entityId: connector.id,
+        actor: user,
+        metadataJson: {
+          previousStatus: connector.status,
+          nextStatus: dto.status,
+        },
+      });
+    }
+
+    return updated;
+  }
+
+  async updateStatus(id: string, status: ConnectorStatus, user: AuthenticatedUser) {
+    const connector = await this.getById(id);
+    this.assertCanAccess(connector, user);
+
+    const updated = await this.prisma.connector.update({
+      where: { id },
+      data: { status },
+    });
+
+    await this.auditService.log({
+      action: 'connector_status_updated',
+      entityType: 'connector',
+      entityId: connector.id,
+      actor: user,
+      metadataJson: {
+        previousStatus: connector.status,
+        nextStatus: status,
+      },
+    });
+
+    return updated;
   }
 
   async getById(id: string) {
@@ -82,5 +130,11 @@ export class ConnectorsService {
 
   private isPrivileged(role: UserRole) {
     return role === UserRole.OPERATOR || role === UserRole.ADMIN;
+  }
+
+  private assertSafeConfig(configJson: Record<string, unknown>) {
+    if (hasForbiddenConfigKeys(configJson)) {
+      throw new BadRequestException(CONNECTOR_SECRET_POLICY_ERROR);
+    }
   }
 }

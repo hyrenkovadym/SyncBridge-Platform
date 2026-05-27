@@ -1,34 +1,32 @@
-# SyncBridge Platform Architecture (Phase 1)
+# SyncBridge Platform Architecture (Phase 2)
 
 ## Monorepo Structure
 SyncBridge uses an npm workspace monorepo:
 
-- `apps/api` - NestJS backend service
-- `apps/web` - Next.js frontend skeleton
-- `infra` - Docker Compose for local infrastructure
-- `docs` - architecture, roadmap, and security documentation
+- `apps/api` - NestJS backend API
+- `apps/web` - Next.js dashboard frontend
+- `infra` - Docker Compose local stack
+- `docs` - architecture, API, roadmap, security docs
 
-## API Service (`apps/api`)
-The API is modular and backend-heavy by design:
-
-- `auth` - registration, login, current user endpoint, JWT foundation
+## Backend Modules (`apps/api`)
+- `auth` - register/login/me + refresh/logout token lifecycle
 - `users` - user persistence helpers
-- `connectors` - data source definitions and ownership access rules
-- `pipelines` - sync pipeline definitions linked to connectors
-- `webhooks` - public webhook intake storing raw events
-- `sync-runs` - synchronous simulated run creation (Phase 1 only)
-- `audit` - centralized audit log writes
-- `health` - health and readiness endpoints
-- `prisma` - Prisma client/provider
+- `connectors` - connector CRUD, no-secrets config policy, status updates
+- `pipelines` - pipeline CRUD, ownership checks, status updates
+- `sync-runs` - simulated runs, mock record persistence, global runs listing
+- `webhooks` - intake, idempotency key support, redacted header storage, event listing
+- `dashboard` - summary metrics and latest activity feed
+- `audit` - centralized audit event writing
+- `health` - health/readiness endpoints
+- `prisma` - Prisma client provider
 
-Global API details:
-- Base URL prefix: `/api`
-- Swagger docs: `/api/docs`
-- ValidationPipe enabled globally
+Global API behavior:
+- Base prefix: `/api`
+- ValidationPipe with whitelist + transform + forbidNonWhitelisted
+- Swagger UI on `/api/docs` (non-production)
 
-## Data Layer (PostgreSQL + Prisma)
-Phase 1 models:
-
+## Data Model
+Core Prisma models:
 - `User`
 - `RefreshToken`
 - `Connector`
@@ -38,59 +36,68 @@ Phase 1 models:
 - `SyncedRecord`
 - `AuditLog`
 
-This schema supports ownership checks, auditability, and lifecycle statuses for connectors, pipelines, runs, and webhook events.
+Phase 2 model notes:
+- `RefreshToken` supports revocation/rotation.
+- `WebhookEvent` stores:
+  - `sourceConnectorRef` (path connector reference)
+  - optional resolved `connectorId`
+  - optional `idempotencyKey`
+  - redacted `headersJson`
 
-## Redis Readiness
-Redis is part of local infrastructure and environment config (`REDIS_URL`) but is not deeply integrated in Phase 1 yet.  
-It is reserved for Phase 4+ workloads (queues, retries, background orchestration).
+## Auth and Session Flow
+- Access token TTL is short-lived.
+- Refresh token is persisted as bcrypt hash only.
+- `POST /auth/refresh` verifies refresh token, revokes previous token row, and issues a new pair.
+- `POST /auth/logout` revokes the provided current refresh token.
 
-## Auth and RBAC
-Authentication:
-- `POST /api/auth/register`
-- `POST /api/auth/login`
-- `GET /api/auth/me`
+## Authorization Model
+Roles:
+- `USER`
+- `OPERATOR`
+- `ADMIN`
 
-RBAC:
-- Roles: `USER`, `OPERATOR`, `ADMIN`
-- `Roles` decorator + `RolesGuard`
-- Ownership-aware service checks for connectors and pipelines
+Enforcement:
+- JWT guard for authenticated endpoints
+- Roles guard for role checks
+- Service-level ownership checks for connector/pipeline/sync run/webhook visibility
 
-## Connectors and Pipelines Foundations
-Connectors define source systems and configuration metadata (`configJson`).  
-Pipelines define source-to-target sync intent (`mappingJson`, `targetName`, status).
+## Connector and Pipeline Configuration
+Connector policy:
+- `configJson` must be object-shaped.
+- Secret-like keys are blocked by policy validation.
 
-Rules:
-- `USER` sees own connectors/pipelines
-- `OPERATOR`/`ADMIN` can see all
-- updates are owner-or-privileged
-- `USER` pipeline creation is limited to own connectors
+Pipeline policy:
+- Users can only attach pipelines to connectors they own (unless privileged role).
 
-## Webhook Intake (Phase 1)
-`POST /api/webhooks/:connectorId/events` accepts arbitrary JSON payloads and stores:
-- payload JSON
-- headers JSON
-- event type
-- status (`RECEIVED`)
+## Sync Run Simulation (Phase 2)
+- `POST /pipelines/:id/runs` accepts optional `mockRecords`.
+- Each record produces `SyncedRecord` row linked to the run.
+- Basic mapping normalization reads simple source-to-target path mappings.
+- No queues/workers/schedulers yet (intentional for current phase).
 
-No processing pipeline runs yet; processing/retry logic is future phase work.
+## Webhook Intake Foundation (Hardened)
+- Intake endpoint: `POST /webhooks/:connectorId/events`
+- Captures headers with sensitive key redaction.
+- Supports idempotency via `X-SyncBridge-Event-ID`.
+- Applies payload size checks.
+- Stores events safely for later processing phases.
 
-## Sync Runs (Phase 1)
-Endpoints:
-- `POST /api/pipelines/:id/runs`
-- `GET /api/pipelines/:id/runs`
-- `GET /api/sync-runs/:id`
+## Dashboard Aggregation
+- `GET /dashboard/summary` provides role-aware counts + latest activity.
+- Users receive scoped metrics for owned entities.
+- Operators/Admins receive global metrics.
 
-Current behavior:
-- creates a synchronous simulated run
-- marks run `SUCCESS`
-- optionally stores sample `SyncedRecord` rows
-- no queue/worker/scheduler integration yet
+## Frontend Integration (`apps/web`)
+Phase 2 wiring:
+- Shared typed API client in `lib/api.ts`
+- Local demo session storage in `lib/auth.ts`
+- Typed interfaces in `lib/types.ts`
+- UI pages call live backend endpoints and show loading/empty/error states
 
-## Future Architecture Direction
-Planned evolution:
-- background workers (BullMQ/Redis)
-- retry and dead-letter strategies
-- incremental sync scheduler
-- transformation and mapping engine
-- connector-specific adapters (REST/Google/1C/etc.)
-- observability and security hardening
+## Deferred to Future Phases
+Not added in Phase 2 by design:
+- real Google API integration
+- real 1C integration
+- background workers (BullMQ)
+- scheduler/orchestrator
+- advanced transformation engine

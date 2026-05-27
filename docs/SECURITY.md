@@ -1,49 +1,70 @@
-# SyncBridge Platform Security Notes (Phase 1)
+# SyncBridge Platform Security Notes (Phase 2)
 
 ## No Secrets Policy
-- Never commit real credentials, API keys, tokens, or private company data.
+- Never commit real credentials, API keys, refresh tokens, or private company data.
 - `.env.example` contains placeholders only.
-- Use local `.env` for development secrets and keep it ignored by git.
+- Use local `.env` for development-only secrets.
 
-## Connector Credential Warning
-- `configJson` is intentionally generic in Phase 1.
-- Do not store real credentials in `configJson`.
-- In production, secrets should be fetched from a dedicated secret manager (for example: HashiCorp Vault, AWS Secrets Manager, GCP Secret Manager, Azure Key Vault).
+## Connector Configuration Policy
+- `configJson` is allowed only for non-sensitive operational metadata.
+- Secret-like keys are rejected (for example `password`, `token`, `apiKey`, `secret`, `privateKey`, `accessToken`, `refreshToken`).
+- Error message:
+  - `Connector credentials must not be stored in configJson. Use a secret manager in production.`
 
-## Webhook Security Notes
-- Phase 1 webhook intake endpoint is public by design (`POST /api/webhooks/:connectorId/events`).
-- It stores raw event payloads for later processing only.
-- Future phases should add:
-  - signature verification
-  - replay protection
-  - source allowlists
-  - stricter payload validation
-  - per-connector security policies
+Production recommendation:
+- Use a dedicated secret manager (Vault, AWS Secrets Manager, GCP Secret Manager, Azure Key Vault).
 
-## JWT Notes
-- Access and refresh secrets are mandatory environment variables.
-- Passwords are hashed with bcrypt.
-- Refresh token records are stored hashed.
-- Future phases should include:
-  - refresh token rotation and revocation endpoints
-  - secure cookie or hardened client storage strategy
-  - token anomaly detection
+## JWT and Session Security
+- Access tokens are short-lived.
+- Refresh tokens are stored hashed in database records.
+- `POST /auth/refresh` rotates refresh tokens and revokes prior token record.
+- `POST /auth/logout` revokes current refresh token.
+- Token hashes are never exposed via API responses.
 
-## RBAC Model
-- Roles in Phase 1:
-  - `USER`
-  - `OPERATOR`
-  - `ADMIN`
-- Ownership checks are enforced for connector/pipeline/sync run access.
-- Privileged roles can view global datasets when required.
+## Webhook Intake Hardening
+- Intake endpoint remains public by design:
+  - `POST /api/webhooks/:connectorId/events`
+- Phase 2 protections:
+  - payload size check
+  - header capture with sensitive header redaction
+  - idempotency key support via `X-SyncBridge-Event-ID`
+  - duplicate event protection per connector reference
 
-## Database and Audit
-- Critical actions are written to `AuditLog` (`user_registered`, `user_logged_in`, connector/pipeline/webhook/sync events).
-- Future work should expand audit coverage and add retention policies.
+### Redacted Header Keys
+- `authorization`
+- `cookie`
+- `x-api-key`
+- `x-auth-token`
 
-## Future Security Recommendations
-- Secret manager integration
-- Rate limiting and abuse protection
-- Data encryption strategy (at rest + in transit + sensitive payload fields)
-- Centralized security monitoring and alerting
-- Dependency and container vulnerability scanning in CI
+## Access Control
+Roles:
+- `USER`
+- `OPERATOR`
+- `ADMIN`
+
+Ownership enforcement:
+- Users only see own connectors/pipelines/runs/webhook events.
+- Privileged roles can view global datasets.
+- Status updates are owner-or-privileged.
+
+## Audit Coverage (Phase 2)
+Audit events include:
+- `user_registered`
+- `user_logged_in`
+- `user_logged_out`
+- `refresh_token_rotated`
+- `connector_created`
+- `connector_status_updated`
+- `pipeline_created`
+- `pipeline_status_updated`
+- `sync_run_created`
+- `synced_record_created`
+- `webhook_event_received`
+- `webhook_event_duplicate_ignored`
+
+## Future Security Work
+- Webhook signature verification
+- Replay protection windows and nonce tracking
+- Rate limiting and abuse controls
+- Encryption strategy for sensitive payload fields
+- Centralized security monitoring + alerting

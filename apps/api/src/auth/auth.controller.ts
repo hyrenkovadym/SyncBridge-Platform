@@ -11,7 +11,10 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { AuthenticatedUser } from './interfaces/authenticated-user.interface';
 import { AuthResponseDto } from './dto/auth-response.dto';
 import { LoginDto } from './dto/login.dto';
+import { LogoutResponseDto } from './dto/logout-response.dto';
+import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { RegisterDto } from './dto/register.dto';
+import { TokenPairResponseDto } from './dto/token-pair-response.dto';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
 
@@ -41,5 +44,22 @@ export class AuthController {
   @ApiOperation({ summary: 'Get current authenticated user' })
   me(@CurrentUser() user: AuthenticatedUser) {
     return this.authService.me(user.sub);
+  }
+
+  @Post('refresh')
+  @ApiOperation({ summary: 'Refresh access token and rotate refresh token' })
+  @ApiOkResponse({ type: TokenPairResponseDto })
+  @ApiUnauthorizedResponse({ description: 'Invalid or expired refresh token' })
+  refresh(@Body() dto: RefreshTokenDto) {
+    return this.authService.refresh(dto.refreshToken);
+  }
+
+  @Post('logout')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Revoke the current refresh token' })
+  @ApiOkResponse({ type: LogoutResponseDto })
+  logout(@Body() dto: RefreshTokenDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.authService.logout(dto.refreshToken, user.sub);
   }
 }

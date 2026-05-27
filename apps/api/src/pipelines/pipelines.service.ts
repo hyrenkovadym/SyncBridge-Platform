@@ -73,7 +73,7 @@ export class PipelinesService {
       }
     }
 
-    return this.prisma.syncPipeline.update({
+    const updated = await this.prisma.syncPipeline.update({
       where: { id },
       data: {
         ...(dto.name ? { name: dto.name.trim() } : {}),
@@ -84,6 +84,44 @@ export class PipelinesService {
         ...(dto.status ? { status: dto.status } : {}),
       },
     });
+
+    if (dto.status && dto.status !== existing.status) {
+      await this.auditService.log({
+        action: 'pipeline_status_updated',
+        entityType: 'pipeline',
+        entityId: existing.id,
+        actor: user,
+        metadataJson: {
+          previousStatus: existing.status,
+          nextStatus: dto.status,
+        },
+      });
+    }
+
+    return updated;
+  }
+
+  async updateStatus(id: string, status: PipelineStatus, user: AuthenticatedUser) {
+    const pipeline = await this.getById(id);
+    this.assertCanAccess(pipeline, user);
+
+    const updated = await this.prisma.syncPipeline.update({
+      where: { id },
+      data: { status },
+    });
+
+    await this.auditService.log({
+      action: 'pipeline_status_updated',
+      entityType: 'pipeline',
+      entityId: pipeline.id,
+      actor: user,
+      metadataJson: {
+        previousStatus: pipeline.status,
+        nextStatus: status,
+      },
+    });
+
+    return updated;
   }
 
   async getById(id: string) {

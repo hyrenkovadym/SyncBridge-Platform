@@ -2,16 +2,11 @@ import { ApiPropertyOptional } from '@nestjs/swagger';
 import { IsArray, IsObject, IsOptional, IsString, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 
-class SampleRecordDto {
+class MockRecordDto {
   @ApiPropertyOptional({ example: 'external-record-1001' })
   @IsOptional()
   @IsString()
   externalId?: string;
-
-  @ApiPropertyOptional({ example: 'WEBHOOK' })
-  @IsOptional()
-  @IsString()
-  sourceType?: string;
 
   @ApiPropertyOptional({
     example: {
@@ -19,29 +14,28 @@ class SampleRecordDto {
       phone: '+1234567',
     },
   })
-  @IsOptional()
   @IsObject()
-  rawJson?: Record<string, unknown>;
-
-  @ApiPropertyOptional({
-    example: {
-      email: 'john@example.com',
-      fullName: 'John Doe',
-    },
-  })
-  @IsOptional()
-  @IsObject()
-  normalizedJson?: Record<string, unknown>;
+  raw!: Record<string, unknown>;
 }
 
 export class CreateSyncRunDto {
   @ApiPropertyOptional({
-    type: [SampleRecordDto],
-    description: 'Optional sample records to persist during simulated sync run',
+    type: [MockRecordDto],
+    description: 'Optional mock records to persist during the simulated sync run',
   })
   @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
-  @Type(() => SampleRecordDto)
-  sampleRecords?: SampleRecordDto[];
+  @Type(() => MockRecordDto)
+  mockRecords?: MockRecordDto[];
+
+  @ApiPropertyOptional({
+    type: [MockRecordDto],
+    description: 'Backward-compatible alias for Phase 1 sample records payload',
+  })
+  @IsOptional()
+  @IsArray()
+  @ValidateNested({ each: true })
+  @Type(() => MockRecordDto)
+  sampleRecords?: MockRecordDto[];
 }

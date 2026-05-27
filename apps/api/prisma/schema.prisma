@@ -132,19 +132,24 @@ model SyncRun {
 }
 
 model WebhookEvent {
-  id          String             @id @default(uuid())
-  connectorId String?
-  eventType   String
-  status      WebhookEventStatus @default(RECEIVED)
-  payloadJson Json
-  headersJson Json?
-  receivedAt  DateTime           @default(now())
+  id                 String             @id @default(uuid())
+  sourceConnectorRef String
+  connectorId        String?
+  idempotencyKey     String?
+  eventType          String
+  status             WebhookEventStatus @default(RECEIVED)
+  payloadJson        Json
+  headersJson        Json?
+  receivedAt         DateTime           @default(now())
   processedAt DateTime?
   errorMessage String?
-  connector   Connector?         @relation(fields: [connectorId], references: [id], onDelete: SetNull)
+  connector          Connector?         @relation(fields: [connectorId], references: [id], onDelete: SetNull)
 
+  @@index([sourceConnectorRef])
   @@index([connectorId])
+  @@index([idempotencyKey])
   @@index([status])
+  @@unique([sourceConnectorRef, idempotencyKey])
 }
 
 model SyncedRecord {

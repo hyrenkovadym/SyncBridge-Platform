@@ -8,6 +8,7 @@ import { RolesGuard } from '../common/guards/roles.guard';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { CreatePipelineDto } from './dto/create-pipeline.dto';
+import { UpdatePipelineStatusDto } from './dto/update-pipeline-status.dto';
 import { UpdatePipelineDto } from './dto/update-pipeline.dto';
 import { PipelinesService } from './pipelines.service';
 
@@ -48,5 +49,16 @@ export class PipelinesController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.pipelinesService.update(id, dto, user);
+  }
+
+  @Patch(':id/status')
+  @Roles(UserRole.USER, UserRole.OPERATOR, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Update pipeline status' })
+  updateStatus(
+    @Param('id') id: string,
+    @Body() dto: UpdatePipelineStatusDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.pipelinesService.updateStatus(id, dto.status, user);
   }
 }

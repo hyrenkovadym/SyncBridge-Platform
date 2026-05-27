@@ -1,6 +1,13 @@
-import { Body, Controller, Headers, Param, Post } from '@nestjs/common';
-import { ApiBody, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, Headers, Param, Post, Query, UseGuards } from '@nestjs/common';
+import { ApiBearerAuth, ApiBody, ApiOperation, ApiParam, ApiTags } from '@nestjs/swagger';
+import { UserRole } from '@prisma/client';
 
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { Roles } from '../common/decorators/roles.decorator';
+import { RolesGuard } from '../common/guards/roles.guard';
+import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
+import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import { ListWebhookEventsQueryDto } from './dto/list-webhook-events-query.dto';
 import { WebhookEventResponseDto } from './dto/webhook-response.dto';
 import { WebhooksService } from './webhooks.service';
 
@@ -27,7 +34,7 @@ export class WebhooksController {
   })
   receiveEvent(
     @Param('connectorId') connectorId: string,
-    @Body() payload: Record<string, unknown>,
+    @Body() payload: unknown,
     @Headers() headers: Record<string, unknown>,
   ): Promise<WebhookEventResponseDto> {
     return this.webhooksService.receiveEvent({
@@ -35,5 +42,23 @@ export class WebhooksController {
       payload: payload ?? {},
       headers,
     });
+  }
+
+  @Get('events')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.USER, UserRole.OPERATOR, UserRole.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'List webhook events (scope depends on role)' })
+  listEvents(@Query() query: ListWebhookEventsQueryDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.webhooksService.listEvents(query, user);
+  }
+
+  @Get('events/:id')
+  @UseGuards(JwtAuthGuard, RolesGuard)
+  @Roles(UserRole.USER, UserRole.OPERATOR, UserRole.ADMIN)
+  @ApiBearerAuth()
+  @ApiOperation({ summary: 'Get webhook event by id' })
+  getEventById(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
+    return this.webhooksService.getEventById(id, user);
   }
 }
