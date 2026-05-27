@@ -15,4 +15,19 @@ export class SchedulerStatusResponseDto {
 
   @ApiProperty({ nullable: true })
   lastPollAt!: Date | null;
+
+  @ApiProperty({ nullable: true })
+  lastPollDurationMs!: number | null;
+
+  @ApiProperty()
+  lastDuePipelines!: number;
+
+  @ApiProperty()
+  lastEnqueued!: number;
+
+  @ApiProperty()
+  lastSkipped!: number;
+
+  @ApiProperty({ nullable: true })
+  lastError!: string | null;
 }

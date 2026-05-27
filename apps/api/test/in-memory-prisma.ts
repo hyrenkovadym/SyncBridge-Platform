@@ -820,6 +820,28 @@ export class InMemoryPrismaService {
       this.auditLogs.push(entity);
       return cloneValue(entity);
     },
+
+    findMany: async (args?: {
+      where?: { action?: string; entityType?: string; entityId?: string };
+      orderBy?: { createdAt: 'asc' | 'desc' };
+      take?: number;
+    }) => {
+      let items = [...this.auditLogs];
+      if (args?.where?.action) {
+        items = items.filter((item) => item.action === args.where?.action);
+      }
+      if (args?.where?.entityType) {
+        items = items.filter((item) => item.entityType === args.where?.entityType);
+      }
+      if (args?.where?.entityId) {
+        items = items.filter((item) => item.entityId === args.where?.entityId);
+      }
+      sortByDate(items, 'createdAt', args?.orderBy?.createdAt ?? 'desc');
+      if (args?.take !== undefined) {
+        items = items.slice(0, args.take);
+      }
+      return cloneValue(items);
+    },
   };
 
   backgroundJob = {

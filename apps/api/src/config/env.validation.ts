@@ -97,6 +97,29 @@ export function validateEnv(config: Record<string, unknown>) {
     );
   }
 
+  const corsOrigins = normalizedConfig.CORS_ORIGIN.split(',')
+    .map((origin) => origin.trim())
+    .filter((origin) => origin.length > 0);
+  if (corsOrigins.length === 0) {
+    throw new Error('Environment variable CORS_ORIGIN must include at least one origin');
+  }
+  for (const origin of corsOrigins) {
+    if (origin === '*') {
+      continue;
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(origin);
+    } catch {
+      throw new Error(`Environment variable CORS_ORIGIN has invalid origin "${origin}"`);
+    }
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      throw new Error(
+        `Environment variable CORS_ORIGIN has unsupported protocol in "${origin}"`,
+      );
+    }
+  }
+
   return {
     ...config,
     ...normalizedConfig,

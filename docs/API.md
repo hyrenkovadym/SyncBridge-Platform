@@ -1,11 +1,11 @@
-# SyncBridge API Reference (Phase 6)
+# API Reference (Phase 7)
 
-Base URL: `http://localhost:4100/api`  
-Swagger: `http://localhost:4100/api/docs`
+Base URL: `http://localhost:4100/api`
 
-## Health
+## Core
 - `GET /health`
 - `GET /ready`
+- `GET /system/info`
 
 ## Auth
 - `POST /auth/register`
@@ -29,28 +29,9 @@ Swagger: `http://localhost:4100/api/docs`
 - `PATCH /pipelines/:id/status`
 - `POST /pipelines/:id/preview`
 - `POST /pipelines/validate-mapping`
-
-## Scheduler (Phase 6)
 - `PATCH /pipelines/:id/schedule`
 - `GET /pipelines/:id/schedule`
 - `POST /pipelines/:id/schedule/trigger`
-- `GET /scheduler/status`
-
-Schedule payload (`PATCH /pipelines/:id/schedule`):
-```json
-{
-  "scheduleEnabled": true,
-  "scheduleCron": "*/5 * * * *",
-  "scheduleTimezone": "UTC",
-  "incrementalMode": true
-}
-```
-
-Rules:
-- owner, `OPERATOR`, `ADMIN` can manage schedule
-- archived pipelines cannot be scheduled
-- paused pipelines cannot be schedule-triggered
-- cron must be valid when scheduling is enabled
 
 ## Sync Runs
 - `POST /pipelines/:id/runs`
@@ -58,21 +39,6 @@ Rules:
 - `GET /sync-runs`
 - `GET /sync-runs/:id`
 - `GET /sync-runs/:id/job`
-
-Run request payload:
-```json
-{
-  "mockRecords": [
-    { "externalId": "1", "raw": { "email": "user@example.com" } }
-  ],
-  "ignoreCursor": false
-}
-```
-
-Trigger types:
-- `MANUAL`
-- `WEBHOOK`
-- `SCHEDULED`
 
 ## Jobs
 - `GET /jobs/:id`
@@ -87,3 +53,20 @@ Trigger types:
 
 ## Dashboard
 - `GET /dashboard/summary`
+
+## Error Shape
+All API errors return:
+```json
+{
+  "statusCode": 400,
+  "message": "Validation failed",
+  "path": "/api/auth/login",
+  "timestamp": "2026-05-27T00:00:00.000Z",
+  "requestId": "..."
+}
+```
+
+## Request ID
+- Accepts incoming `X-Request-ID`
+- Generates one if missing
+- Always returns `X-Request-ID` in response headers

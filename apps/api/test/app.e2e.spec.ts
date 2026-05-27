@@ -73,11 +73,61 @@ describe('SyncBridge API (e2e)', () => {
   it('GET /api/health works', async () => {
     const response = await request(app.getHttpServer()).get('/api/health').expect(200);
     expect(response.body.status).toBe('ok');
+    expect(response.headers['x-request-id']).toBeDefined();
   });
 
   it('GET /api/ready works', async () => {
     const response = await request(app.getHttpServer()).get('/api/ready').expect(200);
     expect(response.body.status).toBe('ready');
+    expect(response.body.database).toBe('up');
+    expect(response.body.queueMode).toBeDefined();
+    expect(response.body.scheduler).toEqual(
+      expect.objectContaining({
+        enabled: expect.any(Boolean),
+        processRole: expect.any(String),
+      }),
+    );
+  });
+
+  it('preserves custom X-Request-ID header', async () => {
+    const requestId = 'custom-req-id-12345';
+    const response = await request(app.getHttpServer())
+      .get('/api/health')
+      .set('X-Request-ID', requestId)
+      .expect(200);
+
+    expect(response.headers['x-request-id']).toBe(requestId);
+  });
+
+  it('error response includes requestId and omits stack trace', async () => {
+    const response = await request(app.getHttpServer())
+      .post('/api/auth/login')
+      .send({ email: 'bad-input' })
+      .expect(400);
+
+    expect(response.body.requestId).toBeDefined();
+    expect(response.body.path).toBe('/api/auth/login');
+    expect(response.body.statusCode).toBe(400);
+    expect(response.body.stack).toBeUndefined();
+    expect(response.body.trace).toBeUndefined();
+  });
+
+  it('GET /api/system/info returns safe runtime metadata', async () => {
+    const response = await request(app.getHttpServer()).get('/api/system/info').expect(200);
+
+    expect(response.body.service).toBe('syncbridge-api');
+    expect(response.body.queueMode).toBeDefined();
+    expect(response.body.scheduler).toEqual(
+      expect.objectContaining({
+        enabled: expect.any(Boolean),
+        processRole: expect.any(String),
+      }),
+    );
+    const serialized = JSON.stringify(response.body).toLowerCase();
+    expect(serialized).not.toContain('jwt_access_secret');
+    expect(serialized).not.toContain('jwt_refresh_secret');
+    expect(serialized).not.toContain('replace_me_access_secret');
+    expect(serialized).not.toContain('replace_me_refresh_secret');
   });
 
   it('refresh token rotates and old refresh token is rejected', async () => {
@@ -935,6 +985,29 @@ describe('SyncBridge API (e2e)', () => {
       .expect(200);
 
     expect(operatorSummary.body.connectorsCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it('audit metadata includes requestId for emitted events', async () => {
+    const auth = await registerUser(app, userOne);
+    const connector = await createConnector(app, auth.accessToken, {
+      name: 'Audit Connector',
+      type: 'WEBHOOK',
+      configJson: { endpoint: '/audit' },
+    });
+
+    const auditEntries = await prisma.auditLog.findMany({
+      where: {
+        action: 'connector_created',
+        entityType: 'connector',
+        entityId: connector.id,
+      },
+      take: 1,
+    });
+
+    expect(auditEntries.length).toBe(1);
+    const metadata = auditEntries[0].metadataJson as Record<string, unknown>;
+    expect(typeof metadata.requestId).toBe('string');
+    expect((metadata.requestId as string).length).toBeGreaterThan(0);
   });
 });
 

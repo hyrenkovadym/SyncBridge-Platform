@@ -1,4 +1,4 @@
-# Webhook Processing Guide (Phase 6)
+# Webhooks (Phase 7)
 
 ## Endpoints
 - `POST /api/webhooks/:connectorId/events`
@@ -8,30 +8,26 @@
 - `POST /api/webhooks/events/:id/retry`
 - `POST /api/webhooks/events/:id/process`
 
-## Intake Safety
-- Sensitive headers are redacted.
-- `X-SyncBridge-Event-ID` is used for idempotency.
-- Duplicate idempotency key returns existing event and skips duplicate processing.
+## Intake Security
+- Redacts sensitive headers (`authorization`, `cookie`, `x-api-key`, `x-auth-token`)
+- Supports idempotency via `X-SyncBridge-Event-ID`
+- Enforces payload size guard (`PayloadTooLargeException` when exceeded)
 
-## Lifecycle
+## Processing Lifecycle
 - `RECEIVED`
 - `PROCESSED`
 - `FAILED`
 - `IGNORED`
 
-## Processing Flow
-1. Event stored.
-2. Event processed sync (`QUEUE_MODE=sync`) or queued (`QUEUE_MODE=async`).
-3. Active pipelines are resolved from source connector.
-4. Sync runs are created with trigger type `WEBHOOK`.
-5. Transformation engine processes payload into synced records.
-6. Event/job status finalized.
+## Queue Integration
+- Sync mode: process immediately
+- Async mode: enqueue `process-webhook-event` and track `BackgroundJob`
 
-## Phase 6 Compatibility
-- Scheduler/incremental logic does not change webhook routing.
-- Webhook-created runs still use `WEBHOOK` trigger type.
-- Incremental cursor handling remains in sync-run engine; webhook flow continues through same run pipeline.
+## Retry/Manual Controls
+- retry endpoint requires `FAILED`
+- process endpoint only for non-finalized events
+- ownership/RBAC checks enforced
 
-## Limitations
-- No provider signature validation yet.
-- No provider-specific normalization templates yet.
+## Future Hardening (Planned)
+- provider signature verification
+- replay-window enforcement

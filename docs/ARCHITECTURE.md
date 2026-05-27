@@ -1,51 +1,36 @@
-# SyncBridge Platform Architecture (Phase 6)
+# Architecture (Phase 7)
 
 ## Monorepo
-- `apps/api`: NestJS API + worker entrypoint
+- `apps/api`: NestJS API and worker runtime
 - `apps/web`: Next.js dashboard
 - `infra`: Docker Compose
-- `docs`: product and engineering documentation
+- `docs`: architecture, API, security, observability
 
-## Core Backend Modules
-- `auth`, `users`, `connectors`, `pipelines`, `sync-runs`, `webhooks`
-- `transformations` (mapping engine)
-- `jobs` (BullMQ queue abstraction)
-- `workers` (processors)
-- `scheduler` (Phase 6 schedule polling + schedule endpoints)
-- `audit`, `dashboard`, `health`, `prisma`
+## Runtime Layers
+- API process (`main.ts`)
+- Worker process (`worker.ts`)
+- Shared queue infrastructure (`jobs` module)
+- Domain modules: connectors, pipelines, sync-runs, webhooks, scheduler, transformations
 
-## Queue/Worker Topology
+## Queue/Worker
 - Queue `sync-runs` / job `execute-sync-run`
 - Queue `webhooks` / job `process-webhook-event`
-- Worker entrypoint: `apps/api/src/worker.ts`
+- Background job state persisted in `BackgroundJob`
 
-## Scheduler Design (Phase 6)
-- Polling is guarded by env:
-  - `SCHEDULER_ENABLED=true`
-  - process role must be `worker`
-  - disabled in test env
-- Poll cycle:
-  1. find due active pipelines (`scheduleEnabled=true`, `nextRunAt <= now`)
-  2. skip if active run exists (`QUEUED`/`RUNNING`)
-  3. enqueue scheduled sync run
-  4. compute and store next `nextRunAt`
-- Duplicate prevention:
-  - DB-visible active-run check per pipeline
-  - local in-process poll lock
+## Scheduler
+- Poll loop in worker role when enabled
+- Finds due active pipelines and enqueues scheduled runs
+- Tracks last tick metadata for observability
 
-## Incremental Sync Foundation
-- `SyncPipeline.cursorJson` stores last successful cursor snapshot
-- `SyncPipeline.incrementalMode` toggles cursor filtering
-- Sync run request can set `ignoreCursor=true` to process all records
-- Cursor advances only on successful runs
+## Incremental Foundation
+- `SyncPipeline.cursorJson` and `incrementalMode`
+- `ignoreCursor` manual override
+- Trigger types tracked on runs: `MANUAL`, `WEBHOOK`, `SCHEDULED`
 
-## Trigger Types
-- `MANUAL`: `POST /pipelines/:id/runs`
-- `WEBHOOK`: webhook-driven processing
-- `SCHEDULED`: scheduler/manual schedule trigger
-
-## Safety Controls
-- no-secrets connector policy
-- webhook sensitive header redaction
-- mapping path safety (`__proto__`, `prototype`, `constructor` blocked)
-- role/ownership checks across schedule, run, job, webhook routes
+## Observability/Security Layer (Phase 7)
+- Request context middleware (`X-Request-ID`)
+- Structured JSON logging
+- Global safe exception filter
+- Rate limiting middleware on sensitive routes
+- Helmet headers + validated CORS origin configuration
+- Health/readiness/system runtime endpoints

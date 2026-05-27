@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 
+import { CommonModule } from '../common/common.module';
 import { validateEnv } from '../config/env.validation';
 import { JobsModule } from '../jobs/jobs.module';
 import { SchedulerModule } from '../scheduler/scheduler.module';
@@ -16,6 +17,7 @@ import { WebhookEventProcessor } from './webhook-event.processor';
       validate: validateEnv,
       envFilePath: ['.env', '../../.env'],
     }),
+    CommonModule,
     JobsModule,
     SchedulerModule,
     SyncRunsModule,

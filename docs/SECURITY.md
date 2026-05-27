@@ -1,41 +1,37 @@
-# SyncBridge Security Notes (Phase 6)
+# Security Notes (Phase 7)
 
-## Secret Handling
-- No secrets committed to repo.
-- Connector `configJson` rejects secret-like keys.
-- Use external secret manager in production.
+## Data Handling
+- Connector config blocks secret-like keys.
+- Webhook sensitive headers are redacted before storage.
+- Public API errors do not expose internal stack traces.
 
-## Mapping/Transformation Safety
-- Mapping validation rejects unsafe paths.
-- Dangerous path segments blocked:
-  - `__proto__`
-  - `prototype`
-  - `constructor`
-- Prevents prototype-pollution path injection.
+## Request and Error Safety
+- Request IDs are accepted/generated and returned via `X-Request-ID`.
+- Global exception filter returns safe, consistent error payload.
+- Internal exception details are logged, not returned.
 
-## Webhook Safety
-- Sensitive headers are redacted before persistence.
-- Supports idempotency via `X-SyncBridge-Event-ID`.
-- Duplicate webhook IDs are not processed twice.
+## Rate Limiting
+Applied to:
+- auth register/login/refresh
+- webhook intake
+- pipeline run trigger
+- transformation preview
+- schedule trigger
 
-## Queue/Job Safety
-- Public job/event APIs expose safe status + safe error messages only.
-- Internal traces/secrets are not returned in public responses.
-- Async retries are bounded by configured attempts/backoff.
+Limits are middleware-managed and disabled in test mode.
 
-## Scheduler/Incremental Safety (Phase 6)
-- Scheduler disabled by default and test-disabled.
-- Scheduler runs only in worker role when enabled.
-- Duplicate prevention: active-run check avoids duplicate due-pipeline enqueue.
-- Incremental cursor advances only on successful runs.
-- Failed runs log `incremental_cursor_not_advanced` and preserve prior cursor.
+## Runtime Headers/CORS
+- Helmet security headers enabled.
+- CORS origins validated as explicit `http/https` origins (or `*`).
 
-## RBAC/Ownership
-- USER scope is owner-only.
-- OPERATOR/ADMIN have privileged visibility/control where defined.
-- Schedule/update/trigger endpoints enforce role + ownership.
+## Audit Safety
+- Audit metadata is requestId-enriched when request context exists.
+- Sensitive secrets/tokens are intentionally not included.
 
-## Current Limitations
-- No webhook signature verification yet.
-- No tenant-isolated queues yet.
-- No advanced payload masking on stored `payloadJson` yet.
+## What Is Intentionally Not Logged
+- JWT access/refresh tokens
+- API keys / auth headers
+- password hashes
+- connector secrets
+- full webhook payload dumps
+- full raw sync records

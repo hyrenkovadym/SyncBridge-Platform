@@ -1,7 +1,8 @@
-import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Job, Queue } from 'bullmq';
 
+import { StructuredLoggerService } from '../common/logging/structured-logger.service';
 import { EXECUTE_SYNC_RUN_JOB, PROCESS_WEBHOOK_EVENT_JOB } from './job-names';
 import { ExecuteSyncRunJobPayload } from './dto/execute-sync-run-job.dto';
 import { ProcessWebhookEventJobPayload } from './dto/process-webhook-event-job.dto';
@@ -9,7 +10,6 @@ import { SYNC_RUNS_QUEUE, WEBHOOKS_QUEUE } from './queues';
 
 @Injectable()
 export class JobsService implements OnModuleDestroy {
-  private readonly logger = new Logger(JobsService.name);
   private readonly queueMode: 'sync' | 'async';
   private readonly defaultAttempts: number;
   private readonly backoffMs: number;
@@ -17,7 +17,10 @@ export class JobsService implements OnModuleDestroy {
   private readonly isTestEnv: boolean;
   private readonly queues = new Map<string, Queue>();
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly logger: StructuredLoggerService,
+  ) {
     this.queueMode = this.getQueueModeFromConfig();
     this.defaultAttempts = this.getIntConfig('BULLMQ_DEFAULT_ATTEMPTS', 3);
     this.backoffMs = this.getIntConfig('BULLMQ_BACKOFF_MS', 5000);
@@ -65,6 +68,40 @@ export class JobsService implements OnModuleDestroy {
     return job ?? null;
   }
 
+  async checkRedisHealth() {
+    if (!this.isAsyncMode()) {
+      return {
+        status: 'skipped',
+        reason: 'queue_mode_sync',
+      };
+    }
+
+    const queue = this.queues.get(SYNC_RUNS_QUEUE) ?? this.queues.get(WEBHOOKS_QUEUE);
+    if (!queue) {
+      return {
+        status: 'unknown',
+        reason: 'queue_not_initialized',
+      };
+    }
+
+    try {
+      const client = await queue.client;
+      const pingClient = client as { ping?: () => Promise<string>; call?: (cmd: string) => Promise<string> };
+      const pong = pingClient.ping
+        ? await pingClient.ping()
+        : pingClient.call
+          ? await pingClient.call('PING')
+          : 'UNKNOWN';
+      return {
+        status: pong === 'PONG' ? 'up' : 'degraded',
+      };
+    } catch {
+      return {
+        status: 'down',
+      };
+    }
+  }
+
   async onModuleDestroy() {
     for (const queue of this.queues.values()) {
       await queue.close();
@@ -94,9 +131,10 @@ export class JobsService implements OnModuleDestroy {
 
     const queue = this.queues.get(queueName);
     if (!queue) {
-      this.logger.warn(
-        `Async queue fallback is active without Redis queue infrastructure for "${queueName}" (expected in tests).`,
-      );
+      this.logger.warn('queue_enqueue_fallback', {
+        queue: queueName,
+        mode: this.queueMode,
+      });
       return { jobId };
     }
 
@@ -107,6 +145,14 @@ export class JobsService implements OnModuleDestroy {
         type: 'fixed',
         delay: this.backoffMs,
       },
+    });
+
+    this.logger.info('queue_job_enqueued', {
+      queue: queueName,
+      jobName,
+      jobId: String(job.id ?? jobId),
+      attempts: this.defaultAttempts,
+      backoffMs: this.backoffMs,
     });
 
     return { jobId: String(job.id ?? jobId) };

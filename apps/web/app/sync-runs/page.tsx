@@ -96,6 +96,7 @@ export default function SyncRunsPage() {
                 <th>Failed</th>
                 <th>Started</th>
                 <th>Finished</th>
+                <th>Error</th>
               </tr>
             </thead>
             <tbody>
@@ -109,6 +110,7 @@ export default function SyncRunsPage() {
                   <td>{run.recordsFailed}</td>
                   <td>{run.startedAt ? new Date(run.startedAt).toLocaleString() : '-'}</td>
                   <td>{run.finishedAt ? new Date(run.finishedAt).toLocaleString() : '-'}</td>
+                  <td>{run.errorMessage ?? '-'}</td>
                 </tr>
               ))}
             </tbody>

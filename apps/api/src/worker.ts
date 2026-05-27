@@ -1,18 +1,17 @@
-import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 
 import { WorkersModule } from './workers/workers.module';
 
 async function bootstrap() {
   process.env.SYNCBRIDGE_PROCESS_ROLE = 'worker';
-  const logger = new Logger('SyncBridgeWorker');
   const app = await NestFactory.createApplicationContext(WorkersModule);
 
-  logger.log('Background worker started');
+  logWorkerEvent('worker_started', { processRole: 'worker' });
 
   const shutdown = async (signal: string) => {
-    logger.log(`Received ${signal}. Shutting down worker context...`);
+    logWorkerEvent('worker_shutdown_requested', { signal });
     await app.close();
+    logWorkerEvent('worker_shutdown_completed', { signal });
     process.exit(0);
   };
 
@@ -25,3 +24,14 @@ async function bootstrap() {
 }
 
 void bootstrap();
+
+function logWorkerEvent(event: string, metadata?: Record<string, unknown>) {
+  console.info(
+    JSON.stringify({
+      timestamp: new Date().toISOString(),
+      level: 'info',
+      event,
+      ...metadata,
+    }),
+  );
+}

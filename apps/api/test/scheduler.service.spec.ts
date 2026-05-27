@@ -5,6 +5,7 @@ import { PipelinesService } from '../src/pipelines/pipelines.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { SchedulerService } from '../src/scheduler/scheduler.service';
 import { SyncRunsService } from '../src/sync-runs/sync-runs.service';
+import { StructuredLoggerService } from '../src/common/logging/structured-logger.service';
 
 type ConfigMap = Record<string, string>;
 
@@ -69,6 +70,12 @@ function createService(overrides?: Partial<ConfigMap>) {
     syncRunsService,
     auditService,
     configService as never,
+    {
+      info: jest.fn(),
+      error: jest.fn(),
+      warn: jest.fn(),
+      debug: jest.fn(),
+    } as unknown as StructuredLoggerService,
   );
 
   return { service, prisma, syncRunsService, auditService };
@@ -128,7 +135,7 @@ describe('SchedulerService', () => {
     expect(syncRunsService.createScheduledForPipeline).not.toHaveBeenCalled();
     expect(auditService.log).toHaveBeenCalledWith(
       expect.objectContaining({
-        action: 'scheduled_sync_skipped',
+        action: 'scheduled_pipeline_skipped',
         metadataJson: expect.objectContaining({
           pipelineId: duePipeline.id,
           reason: 'active_run_exists',
@@ -142,5 +149,20 @@ describe('SchedulerService', () => {
     await service.runPollingCycle();
     expect(prisma.syncPipeline.findMany).not.toHaveBeenCalled();
   });
-});
 
+  it('returns scheduler status with observability fields', () => {
+    const { service } = createService();
+    const status = service.getSchedulerStatus();
+    expect(status).toEqual(
+      expect.objectContaining({
+        schedulerEnabled: true,
+        processRole: 'worker',
+        pollIntervalSeconds: 30,
+        lockTtlSeconds: 60,
+        lastDuePipelines: expect.any(Number),
+        lastEnqueued: expect.any(Number),
+        lastSkipped: expect.any(Number),
+      }),
+    );
+  });
+});

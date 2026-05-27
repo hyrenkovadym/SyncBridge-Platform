@@ -113,6 +113,7 @@ export default function WebhooksPage() {
                 <th>Event Type</th>
                 <th>Status</th>
                 <th>Connector</th>
+                <th>Idempotency</th>
                 <th>Received At</th>
                 <th>Processed At</th>
                 <th>Job</th>
@@ -126,9 +127,18 @@ export default function WebhooksPage() {
                   <td>{event.eventType}</td>
                   <td>{event.status}</td>
                   <td>{event.connector?.name ?? event.sourceConnectorRef}</td>
+                  <td>{event.idempotencyKey ?? '-'}</td>
                   <td>{new Date(event.receivedAt).toLocaleString()}</td>
                   <td>{event.processedAt ? new Date(event.processedAt).toLocaleString() : '-'}</td>
-                  <td>{jobByEventId[event.id]?.status ?? '-'}</td>
+                  <td>
+                    {jobByEventId[event.id]
+                      ? `${jobByEventId[event.id]?.status}${
+                          jobByEventId[event.id]?.lastError
+                            ? ` (${jobByEventId[event.id]?.lastError})`
+                            : ''
+                        }`
+                      : '-'}
+                  </td>
                   <td>{event.errorMessage ?? '-'}</td>
                   <td>
                     {event.status === 'FAILED' ? (

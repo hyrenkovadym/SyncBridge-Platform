@@ -1,7 +1,8 @@
-import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
+import { Injectable, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Job, Worker } from 'bullmq';
 
+import { StructuredLoggerService } from '../common/logging/structured-logger.service';
 import { ExecuteSyncRunJobPayload } from '../jobs/dto/execute-sync-run-job.dto';
 import { EXECUTE_SYNC_RUN_JOB } from '../jobs/job-names';
 import { JobsService } from '../jobs/jobs.service';
@@ -10,7 +11,6 @@ import { SyncRunsService } from '../sync-runs/sync-runs.service';
 
 @Injectable()
 export class SyncRunProcessor implements OnModuleInit, OnModuleDestroy {
-  private readonly logger = new Logger(SyncRunProcessor.name);
   private readonly isTestEnv: boolean;
   private readonly redisUrl: string;
   private worker?: Worker;
@@ -19,6 +19,7 @@ export class SyncRunProcessor implements OnModuleInit, OnModuleDestroy {
     private readonly configService: ConfigService,
     private readonly jobsService: JobsService,
     private readonly syncRunsService: SyncRunsService,
+    private readonly logger: StructuredLoggerService,
   ) {
     this.isTestEnv = this.configService.get<string>('NODE_ENV', 'development') === 'test';
     this.redisUrl = this.configService.get<string>('BULLMQ_REDIS_URL', 'redis://localhost:6380');
@@ -26,12 +27,12 @@ export class SyncRunProcessor implements OnModuleInit, OnModuleDestroy {
 
   async onModuleInit() {
     if (!this.jobsService.isAsyncMode()) {
-      this.logger.log('Queue mode is sync. Worker is disabled.');
+      this.logger.info('sync_run_worker_disabled', { reason: 'queue_mode_sync' });
       return;
     }
 
     if (this.isTestEnv) {
-      this.logger.log('Test environment detected. Redis worker bootstrap is skipped.');
+      this.logger.info('sync_run_worker_disabled', { reason: 'test_environment' });
       return;
     }
 
@@ -46,14 +47,21 @@ export class SyncRunProcessor implements OnModuleInit, OnModuleDestroy {
     );
 
     this.worker.on('completed', (job) => {
-      this.logger.log(`Completed job ${job.id}`);
+      this.logger.info('sync_run_worker_job_completed', {
+        queue: SYNC_RUNS_QUEUE,
+        jobId: String(job.id ?? 'unknown'),
+      });
     });
 
     this.worker.on('failed', (job, error) => {
-      this.logger.error(`Failed job ${job?.id ?? 'unknown'}: ${error.message}`);
+      this.logger.error('sync_run_worker_job_failed', {
+        queue: SYNC_RUNS_QUEUE,
+        jobId: String(job?.id ?? 'unknown'),
+        errorMessage: error.message,
+      });
     });
 
-    this.logger.log(`Worker subscribed to queue "${SYNC_RUNS_QUEUE}"`);
+    this.logger.info('sync_run_worker_subscribed', { queue: SYNC_RUNS_QUEUE });
   }
 
   async processPayloadForTest(payload: ExecuteSyncRunJobPayload, attempts = 1) {
@@ -68,7 +76,11 @@ export class SyncRunProcessor implements OnModuleInit, OnModuleDestroy {
 
   private async processJob(job: Job) {
     if (job.name !== EXECUTE_SYNC_RUN_JOB) {
-      this.logger.warn(`Ignoring unsupported job name "${job.name}"`);
+      this.logger.warn('sync_run_worker_unsupported_job', {
+        queue: SYNC_RUNS_QUEUE,
+        jobName: job.name,
+        jobId: String(job.id ?? 'unknown'),
+      });
       return;
     }
 

@@ -1,92 +1,30 @@
-# Mapping Engine Guide (Phase 6)
+# Mapping and Transformation (Phase 7)
 
-## Supported Mapping Format
-Primary mapping format:
-
+## Format
 ```json
 {
   "fields": {
-    "email": {
-      "path": "contact.email",
-      "required": true,
-      "type": "string",
-      "trim": true,
-      "lowercase": true
-    },
-    "fullName": {
-      "path": "contact.name",
-      "default": "Unknown",
-      "type": "string",
-      "trim": true
-    },
-    "amount": {
-      "path": "invoice.total",
-      "type": "number"
-    },
-    "isActive": {
-      "path": "active",
-      "type": "boolean",
-      "default": true
-    }
+    "email": { "path": "contact.email", "required": true, "type": "string" }
   }
 }
 ```
 
-## Field Options
-- `path`: source path in raw record
-- `required`: mark missing/empty as error
-- `default`: fallback when value missing
-- `type`: `string | number | boolean | date | json`
-- `trim`: string-only
-- `lowercase`: string-only
-- `uppercase`: string-only
-- `compute`: `now | uuid` (simple computed value generation)
+## Supported Type Coercion
+- `string`
+- `number`
+- `boolean`
+- `date` (ISO output)
+- `json`
 
-## Type Coercion Rules
-- `string`: `String(value)` + optional trim/case transforms
-- `number`: finite numeric coercion from number/string
-- `boolean`: accepts `true/false`, `1/0`, `yes/no`
-- `date`: converted to ISO string
-- `json`: passthrough (structured clone)
+## Safety
+- path utils reject `__proto__`, `prototype`, `constructor`
+- unsupported mapping shapes are rejected
 
-If coercion fails, transformation error is returned for that field.
+## Related Endpoints
+- `POST /api/pipelines/validate-mapping`
+- `POST /api/pipelines/:id/preview`
+- `POST /api/pipelines/:id/runs`
 
-## Required Handling
-If a required field is missing after default resolution:
-- field error code: `REQUIRED_FIELD_MISSING`
-- record is treated as invalid for sync run persistence
-
-## Nested Path Safety
-`getByPath` / `setByPath` reject dangerous segments:
-- `__proto__`
-- `prototype`
-- `constructor`
-
-Unsafe paths are rejected at mapping validation time.
-
-## Preview Endpoint
-`POST /api/pipelines/:id/preview`
-
-- Input: sample records with `raw` payloads
-- Output: per-record `normalized` + `errors` + summary
-- No DB writes for runs/records
-
-## Run Integration
-`POST /api/pipelines/:id/runs`
-
-- Applies the same transformation engine used by preview
-- Stores only valid transformed records
-- Updates run counters and failure status
-- In `QUEUE_MODE=async`, the same mapping logic executes in worker context.
-- Supports incremental cursor filtering when pipeline `incrementalMode=true`.
-- `ignoreCursor=true` can be passed for manual full reprocessing.
-
-## Trigger Types
-Each run tracks one trigger type:
-- `MANUAL`
-- `WEBHOOK`
-- `SCHEDULED`
-
-## Current Limitations
-- No expression language / advanced computed formulas yet
-- Preview uses stored pipeline mapping (not unsaved frontend edits)
+## Incremental Compatibility
+- run payload supports `ignoreCursor`
+- incremental mode uses pipeline cursor checkpoints

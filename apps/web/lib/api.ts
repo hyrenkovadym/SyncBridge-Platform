@@ -31,10 +31,12 @@ const DEFAULT_API_BASE_URL = 'http://localhost:4100/api';
 
 export class ApiError extends Error {
   status: number;
+  requestId?: string;
 
-  constructor(status: number, message: string) {
+  constructor(status: number, message: string, requestId?: string) {
     super(message);
     this.status = status;
+    this.requestId = requestId;
   }
 }
 
@@ -61,20 +63,37 @@ function buildHeaders(accessToken?: string) {
   return headers;
 }
 
-async function parseErrorMessage(response: Response) {
+async function parseErrorPayload(response: Response) {
   try {
-    const payload = (await response.json()) as { message?: string | string[] };
+    const payload = (await response.json()) as {
+      message?: string | string[];
+      requestId?: string;
+    };
+    const requestId = typeof payload.requestId === 'string' ? payload.requestId : undefined;
+
     if (Array.isArray(payload.message)) {
-      return payload.message.join(', ');
+      return {
+        message: payload.message.join(', '),
+        requestId,
+      };
     }
     if (typeof payload.message === 'string' && payload.message.length > 0) {
-      return payload.message;
+      return {
+        message: payload.message,
+        requestId,
+      };
     }
   } catch {
-    return `Request failed with status ${response.status}`;
+    return {
+      message: `Request failed with status ${response.status}`,
+      requestId: undefined,
+    };
   }
 
-  return `Request failed with status ${response.status}`;
+  return {
+    message: `Request failed with status ${response.status}`,
+    requestId: undefined,
+  };
 }
 
 async function performTokenRefresh() {
@@ -122,7 +141,11 @@ async function requestApi<T>(path: string, options: RequestOptions = {}): Promis
   }
 
   if (!response.ok) {
-    throw new ApiError(response.status, await parseErrorMessage(response));
+    const errorPayload = await parseErrorPayload(response);
+    const message = errorPayload.requestId
+      ? `${errorPayload.message} (requestId: ${errorPayload.requestId})`
+      : errorPayload.message;
+    throw new ApiError(response.status, message, errorPayload.requestId);
   }
 
   return (await response.json()) as T;

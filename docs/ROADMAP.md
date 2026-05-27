@@ -1,37 +1,16 @@
-# SyncBridge Platform Roadmap
+# Roadmap
 
-## Phase 1 (Completed)
-- Monorepo/API foundation
-- auth/RBAC/connectors/pipelines/webhook intake baseline
+## Completed
+- Phase 1: foundation
+- Phase 2: frontend wiring + auth/session hardening
+- Phase 3: transformation engine + mapping validation/preview
+- Phase 4: background sync jobs (BullMQ)
+- Phase 5: webhook processing + retry/manual flow
+- Phase 6: scheduler + incremental cursor foundation
+- Phase 7: observability + security hardening
 
-## Phase 2 (Completed)
-- Frontend wiring and auth session UX
-- refresh/logout
-- connector/pipeline status and validation hardening
-
-## Phase 3 (Completed)
-- transformation engine
-- mapping validation + preview
-- safe path utilities
-
-## Phase 4 (Completed)
-- BullMQ sync-run background jobs
-- worker process + job status APIs
-
-## Phase 5 (Completed)
-- webhook processing queue/worker
-- webhook lifecycle + retry/manual processing
-
-## Phase 6 (Completed)
-- scheduler endpoints and polling foundation
-- scheduled sync enqueue flow
-- incremental cursor/checkpoint foundation
-- run trigger-type tracking (`MANUAL`, `WEBHOOK`, `SCHEDULED`)
-
-## Phase 7 (Next)
-- observability and security polish
-- metrics/alerts, tighter audit reporting, operational hardening
-
-## Phase 8 (Future)
-- production-readiness pass
-- portfolio/demo packaging
+## Next
+- Phase 8: final portfolio release prep
+  - deployment/readme polish
+  - demo scripts
+  - final non-functional review checklist

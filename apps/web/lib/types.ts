@@ -22,6 +22,9 @@ export interface ApiErrorPayload {
   statusCode: number;
   message: string | string[];
   error?: string;
+  path?: string;
+  timestamp?: string;
+  requestId?: string;
 }
 
 export interface AuthUser {
@@ -215,4 +218,9 @@ export interface SchedulerStatus {
   pollIntervalSeconds: number;
   lockTtlSeconds: number;
   lastPollAt: string | null;
+  lastPollDurationMs: number | null;
+  lastDuePipelines: number;
+  lastEnqueued: number;
+  lastSkipped: number;
+  lastError: string | null;
 }

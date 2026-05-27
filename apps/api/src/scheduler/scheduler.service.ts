@@ -10,6 +10,7 @@ import { PipelineStatus, Prisma, SyncRunTriggerType, UserRole } from '@prisma/cl
 
 import { AuditActor, AuditService } from '../audit/audit.service';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
+import { StructuredLoggerService } from '../common/logging/structured-logger.service';
 import { PipelinesService } from '../pipelines/pipelines.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { SyncRunsService } from '../sync-runs/sync-runs.service';
@@ -34,6 +35,11 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
   private pollInProgress = false;
   private lockUntil = 0;
   private lastPollAt: Date | null = null;
+  private lastPollDurationMs: number | null = null;
+  private lastDuePipelines = 0;
+  private lastEnqueued = 0;
+  private lastSkipped = 0;
+  private lastError: string | null = null;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -41,6 +47,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     private readonly syncRunsService: SyncRunsService,
     private readonly auditService: AuditService,
     private readonly configService: ConfigService,
+    private readonly structuredLogger: StructuredLoggerService,
   ) {
     this.schedulerEnabled = this.configService.get<string>('SCHEDULER_ENABLED', 'false') === 'true';
     this.pollIntervalSeconds = this.getIntConfig('SCHEDULER_POLL_INTERVAL_SECONDS', 30, 1);
@@ -170,7 +177,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     const hasActiveRun = await this.syncRunsService.hasActiveRun(pipeline.id);
     if (hasActiveRun) {
       await this.auditService.log({
-        action: 'scheduled_sync_skipped',
+        action: 'scheduled_pipeline_skipped',
         entityType: 'pipeline',
         entityId: pipeline.id,
         actor: user,
@@ -211,6 +218,11 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       pollIntervalSeconds: this.pollIntervalSeconds,
       lockTtlSeconds: this.lockTtlSeconds,
       lastPollAt: this.lastPollAt,
+      lastPollDurationMs: this.lastPollDurationMs,
+      lastDuePipelines: this.lastDuePipelines,
+      lastEnqueued: this.lastEnqueued,
+      lastSkipped: this.lastSkipped,
+      lastError: this.lastError,
     };
   }
 
@@ -227,18 +239,73 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
     this.pollInProgress = true;
     this.lockUntil = now + this.lockTtlSeconds * 1000;
     this.lastPollAt = new Date();
+    const tickStartedAt = Date.now();
 
     try {
+      this.structuredLogger.info('scheduler_tick_started', {
+        schedulerEnabled: this.schedulerEnabled,
+        pollIntervalSeconds: this.pollIntervalSeconds,
+      });
+      await this.auditService.log({
+        action: 'scheduler_tick_started',
+        entityType: 'scheduler',
+        entityId: 'default',
+        metadataJson: {
+          startedAt: this.lastPollAt,
+        },
+      });
+
       const summary = await this.enqueueDuePipelines();
+      this.lastDuePipelines = summary.duePipelines;
+      this.lastEnqueued = summary.enqueued;
+      this.lastSkipped = summary.skipped;
+      this.lastPollDurationMs = Date.now() - tickStartedAt;
+      this.lastError = null;
+
+      this.structuredLogger.info('scheduler_tick_completed', {
+        duePipelines: summary.duePipelines,
+        enqueued: summary.enqueued,
+        skipped: summary.skipped,
+        durationMs: this.lastPollDurationMs,
+      });
+      await this.auditService.log({
+        action: 'scheduler_tick_completed',
+        entityType: 'scheduler',
+        entityId: 'default',
+        metadataJson: {
+          duePipelines: summary.duePipelines,
+          enqueued: summary.enqueued,
+          skipped: summary.skipped,
+          durationMs: this.lastPollDurationMs,
+        },
+      });
+
       if (summary.duePipelines > 0) {
         this.logger.log(
           `Scheduler cycle: due=${summary.duePipelines}, enqueued=${summary.enqueued}, skipped=${summary.skipped}`,
         );
       }
     } catch (error) {
+      const safeMessage = error instanceof Error ? error.message : 'unknown error';
+      this.lastError = safeMessage;
+      this.lastPollDurationMs = Date.now() - tickStartedAt;
+
       this.logger.error(
-        `Scheduler cycle failed: ${error instanceof Error ? error.message : 'unknown error'}`,
+        `Scheduler cycle failed: ${safeMessage}`,
       );
+      this.structuredLogger.error('scheduler_tick_failed', {
+        errorMessage: safeMessage,
+        durationMs: this.lastPollDurationMs,
+      });
+      await this.auditService.log({
+        action: 'scheduler_tick_failed',
+        entityType: 'scheduler',
+        entityId: 'default',
+        metadataJson: {
+          errorMessage: safeMessage,
+          durationMs: this.lastPollDurationMs,
+        },
+      });
     } finally {
       this.pollInProgress = false;
       this.lockUntil = 0;
@@ -271,7 +338,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       if (cron.length === 0 || !validateTimezone(timezone) || !validateCronExpression(cron).valid) {
         skipped += 1;
         await this.auditService.log({
-          action: 'scheduled_sync_skipped',
+          action: 'scheduled_pipeline_skipped',
           entityType: 'pipeline',
           entityId: pipeline.id,
           actor,
@@ -287,7 +354,7 @@ export class SchedulerService implements OnModuleInit, OnModuleDestroy {
       if (hasActiveRun) {
         skipped += 1;
         await this.auditService.log({
-          action: 'scheduled_sync_skipped',
+          action: 'scheduled_pipeline_skipped',
           entityType: 'pipeline',
           entityId: pipeline.id,
           actor,

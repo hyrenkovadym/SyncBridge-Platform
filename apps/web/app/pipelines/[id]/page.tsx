@@ -228,7 +228,8 @@ export default function PipelineDetailPage() {
       return;
     }
     if (job.status === 'FAILED') {
-      setRunMessage(`Job ${jobId} failed.`);
+      const details = job.lastError ? ` ${job.lastError}` : '';
+      setRunMessage(`Job ${jobId} failed.${details}`);
       return;
     }
 
@@ -252,8 +253,16 @@ export default function PipelineDetailPage() {
           {schedulerStatus ? (
             <p>
               Scheduler: {schedulerStatus.schedulerEnabled ? 'enabled' : 'disabled'} (
-              {schedulerStatus.processRole})
+              {schedulerStatus.processRole}) | Last tick:{' '}
+              {schedulerStatus.lastPollAt
+                ? `${new Date(schedulerStatus.lastPollAt).toLocaleString()} (${schedulerStatus.lastPollDurationMs ?? 0}ms)`
+                : 'n/a'}{' '}
+              | due/enqueued/skipped: {schedulerStatus.lastDuePipelines}/{schedulerStatus.lastEnqueued}/
+              {schedulerStatus.lastSkipped}
             </p>
+          ) : null}
+          {schedulerStatus?.lastError ? (
+            <p className="error-message">Scheduler last error: {schedulerStatus.lastError}</p>
           ) : null}
 
           <div className="card">
