@@ -21,6 +21,7 @@ import {
   SyncRunStatus,
   TokenPairResponse,
   TransformationPreviewResponse,
+  WebhookEventActionResponse,
   WebhookEvent,
 } from './types';
 
@@ -305,6 +306,22 @@ export const api = {
 
   async getWebhookEvent(id: string) {
     return requestApi<WebhookEvent>(`/webhooks/events/${id}`);
+  },
+
+  async getWebhookEventJob(id: string) {
+    return requestApi<BackgroundJob>(`/webhooks/events/${id}/job`);
+  },
+
+  async retryWebhookEvent(id: string) {
+    return requestApi<WebhookEventActionResponse>(`/webhooks/events/${id}/retry`, {
+      method: 'POST',
+    });
+  },
+
+  async processWebhookEvent(id: string) {
+    return requestApi<WebhookEventActionResponse>(`/webhooks/events/${id}/process`, {
+      method: 'POST',
+    });
   },
 
   async getDashboardSummary() {

@@ -81,5 +81,4 @@ Unsafe paths are rejected at mapping validation time.
 
 ## Current Limitations
 - No expression language / advanced computed formulas yet
-- No async/background execution yet
 - Preview uses stored pipeline mapping (not unsaved frontend edits)

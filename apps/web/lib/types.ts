@@ -14,7 +14,7 @@ export type ConnectorStatus = 'ACTIVE' | 'PAUSED' | 'ERROR';
 export type PipelineStatus = 'ACTIVE' | 'PAUSED' | 'ARCHIVED';
 export type SyncRunStatus = 'QUEUED' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'CANCELLED';
 export type WebhookEventStatus = 'RECEIVED' | 'PROCESSED' | 'FAILED' | 'IGNORED';
-export type BackgroundJobType = 'SYNC_RUN';
+export type BackgroundJobType = 'SYNC_RUN' | 'WEBHOOK_PROCESSING';
 export type BackgroundJobStatus = 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED';
 
 export interface ApiErrorPayload {
@@ -131,6 +131,15 @@ export interface WebhookEvent {
     name: string;
     ownerId?: string;
   } | null;
+}
+
+export interface WebhookEventActionResponse {
+  eventId: string;
+  id: string;
+  status: WebhookEventStatus;
+  duplicate?: boolean;
+  jobId?: string | null;
+  message?: string;
 }
 
 export interface PaginatedResponse<T> {

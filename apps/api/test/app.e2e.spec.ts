@@ -1,6 +1,6 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { UserRole } from '@prisma/client';
+import { UserRole, WebhookEventStatus } from '@prisma/client';
 import request from 'supertest';
 
 import { AppModule } from '../src/app.module';
@@ -486,7 +486,7 @@ describe('SyncBridge API (e2e)', () => {
     expect(operatorRuns.body.items.length).toBeGreaterThanOrEqual(2);
   });
 
-  it('webhook intake stores event and redacts sensitive headers', async () => {
+  it('webhook intake stores event, redacts sensitive headers, and marks no-pipeline events as ignored in sync mode', async () => {
     const auth = await registerUser(app, userOne);
     const connector = await createConnector(app, auth.accessToken, {
       name: 'Webhook Connector',
@@ -501,12 +501,62 @@ describe('SyncBridge API (e2e)', () => {
       .send({ eventType: 'customer.updated', customerId: 'C-1001' })
       .expect(201);
 
-    expect(response.body.status).toBe('RECEIVED');
+    expect(response.body.status).toBe('IGNORED');
 
     const stored = await prisma.webhookEvent.findUnique({ where: { id: response.body.id as string } });
     expect(stored).not.toBeNull();
     expect((stored?.headersJson as { authorization?: string }).authorization).toBe('REDACTED');
     expect((stored?.headersJson as { 'x-api-key'?: string })['x-api-key']).toBe('REDACTED');
+    expect(stored?.status).toBe('IGNORED');
+  });
+
+  it('sync mode processes webhook immediately and creates sync run + synced record', async () => {
+    const auth = await registerUser(app, userOne);
+    const connector = await createConnector(app, auth.accessToken, {
+      name: 'Webhook Source',
+      type: 'WEBHOOK',
+      configJson: { endpoint: '/sync-process' },
+    });
+    const pipeline = await createPipeline(app, auth.accessToken, {
+      name: 'Webhook Pipeline',
+      sourceConnectorId: connector.id,
+      targetName: 'contacts',
+      mappingJson: {
+        fields: {
+          email: { path: 'contact.email', type: 'string', required: true, lowercase: true, trim: true },
+          amount: { path: 'invoice.total', type: 'number' },
+        },
+      },
+    });
+
+    const intake = await request(app.getHttpServer())
+      .post(`/api/webhooks/${connector.id}/events`)
+      .set('X-SyncBridge-Event-ID', 'evt-sync-1')
+      .send({
+        eventType: 'invoice.updated',
+        contact: { email: ' USER@EXAMPLE.COM ' },
+        invoice: { total: '42.50' },
+      })
+      .expect(201);
+
+    expect(intake.body.status).toBe('PROCESSED');
+
+    const runs = await request(app.getHttpServer())
+      .get(`/api/pipelines/${pipeline.id}/runs`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .expect(200);
+
+    expect(runs.body).toHaveLength(1);
+    expect(runs.body[0].status).toBe('SUCCESS');
+    expect(runs.body[0].recordsProcessed).toBe(1);
+    expect(runs.body[0].recordsFailed).toBe(0);
+
+    const records = await prisma.syncedRecord.findMany({
+      where: { syncRunId: runs.body[0].id as string },
+    });
+    expect(records).toHaveLength(1);
+    expect((records[0].normalizedJson as { email?: string }).email).toBe('user@example.com');
+    expect((records[0].normalizedJson as { amount?: number }).amount).toBe(42.5);
   });
 
   it('duplicate X-SyncBridge-Event-ID is handled idempotently', async () => {
@@ -538,6 +588,47 @@ describe('SyncBridge API (e2e)', () => {
       .expect(200);
 
     expect(list.body.items).toHaveLength(1);
+  });
+
+  it('retry webhook endpoint is owner-scoped and supports failed events', async () => {
+    const authOne = await registerUser(app, userOne);
+    const authTwo = await registerUser(app, userTwo);
+
+    const connector = await createConnector(app, authOne.accessToken, {
+      name: 'Retry Connector',
+      type: 'WEBHOOK',
+      configJson: { endpoint: '/retry' },
+    });
+
+    const intake = await request(app.getHttpServer())
+      .post(`/api/webhooks/${connector.id}/events`)
+      .send({ eventType: 'retry.test' })
+      .expect(201);
+
+    await prisma.webhookEvent.update({
+      where: { id: intake.body.id as string },
+      data: {
+        status: WebhookEventStatus.FAILED,
+        errorMessage: 'forced for test',
+      },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/api/webhooks/events/${intake.body.id as string}/retry`)
+      .set('Authorization', `Bearer ${authTwo.accessToken}`)
+      .expect(403);
+
+    const ownerRetry = await request(app.getHttpServer())
+      .post(`/api/webhooks/events/${intake.body.id as string}/retry`)
+      .set('Authorization', `Bearer ${authOne.accessToken}`)
+      .expect(201);
+
+    expect(ownerRetry.body.status).toBe('IGNORED');
+
+    const stored = await prisma.webhookEvent.findUnique({
+      where: { id: intake.body.id as string },
+    });
+    expect(stored?.status).toBe('IGNORED');
   });
 
   it('user sees only own webhook events while privileged users see all', async () => {
@@ -635,7 +726,7 @@ describe('SyncBridge API (e2e)', () => {
 
     expect(userOneSummary.body.connectorsCount).toBe(1);
     expect(userOneSummary.body.pipelinesCount).toBe(1);
-    expect(userOneSummary.body.syncRunsCount).toBe(1);
+    expect(userOneSummary.body.syncRunsCount).toBe(2);
     expect(userOneSummary.body.webhookEventsCount).toBe(1);
 
     const operatorAuth = await createPrivilegedUser(app, prisma, {

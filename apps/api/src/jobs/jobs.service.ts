@@ -2,9 +2,10 @@ import { Injectable, Logger, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Job, Queue } from 'bullmq';
 
-import { EXECUTE_SYNC_RUN_JOB } from './job-names';
+import { EXECUTE_SYNC_RUN_JOB, PROCESS_WEBHOOK_EVENT_JOB } from './job-names';
 import { ExecuteSyncRunJobPayload } from './dto/execute-sync-run-job.dto';
-import { SYNC_RUNS_QUEUE } from './queues';
+import { ProcessWebhookEventJobPayload } from './dto/process-webhook-event-job.dto';
+import { SYNC_RUNS_QUEUE, WEBHOOKS_QUEUE } from './queues';
 
 @Injectable()
 export class JobsService implements OnModuleDestroy {
@@ -14,7 +15,7 @@ export class JobsService implements OnModuleDestroy {
   private readonly backoffMs: number;
   private readonly redisUrl: string;
   private readonly isTestEnv: boolean;
-  private readonly queue?: Queue;
+  private readonly queues = new Map<string, Queue>();
 
   constructor(private readonly configService: ConfigService) {
     this.queueMode = this.getQueueModeFromConfig();
@@ -24,15 +25,8 @@ export class JobsService implements OnModuleDestroy {
     this.isTestEnv = this.configService.get<string>('NODE_ENV', 'development') === 'test';
 
     if (this.shouldUseRedisQueueInfrastructure()) {
-      this.queue = new Queue(SYNC_RUNS_QUEUE, {
-        connection: {
-          url: this.redisUrl,
-        },
-        defaultJobOptions: {
-          removeOnComplete: false,
-          removeOnFail: false,
-        },
-      });
+      this.queues.set(SYNC_RUNS_QUEUE, this.createQueue(SYNC_RUNS_QUEUE));
+      this.queues.set(WEBHOOKS_QUEUE, this.createQueue(WEBHOOKS_QUEUE));
     }
   }
 
@@ -49,19 +43,64 @@ export class JobsService implements OnModuleDestroy {
   }
 
   async enqueueExecuteSyncRunJob(payload: ExecuteSyncRunJobPayload) {
+    return this.enqueueJob(SYNC_RUNS_QUEUE, EXECUTE_SYNC_RUN_JOB, payload, payload.backgroundJobId);
+  }
+
+  async enqueueProcessWebhookEventJob(payload: ProcessWebhookEventJobPayload) {
+    return this.enqueueJob(
+      WEBHOOKS_QUEUE,
+      PROCESS_WEBHOOK_EVENT_JOB,
+      payload,
+      payload.backgroundJobId,
+    );
+  }
+
+  async getBullMqJob(queueName: string, jobId: string): Promise<Job | null> {
+    const queue = this.queues.get(queueName);
+    if (!queue) {
+      return null;
+    }
+
+    const job = await queue.getJob(jobId);
+    return job ?? null;
+  }
+
+  async onModuleDestroy() {
+    for (const queue of this.queues.values()) {
+      await queue.close();
+    }
+  }
+
+  private shouldUseRedisQueueInfrastructure() {
+    return this.isAsyncMode() && !this.isTestEnv;
+  }
+
+  private createQueue(queueName: string) {
+    return new Queue(queueName, {
+      connection: {
+        url: this.redisUrl,
+      },
+      defaultJobOptions: {
+        removeOnComplete: false,
+        removeOnFail: false,
+      },
+    });
+  }
+
+  private async enqueueJob(queueName: string, jobName: string, payload: unknown, jobId: string) {
     if (!this.isAsyncMode()) {
       throw new Error('Queue mode is sync. Async enqueue is not enabled.');
     }
 
-    const jobId = payload.backgroundJobId;
-    if (!this.queue) {
+    const queue = this.queues.get(queueName);
+    if (!queue) {
       this.logger.warn(
-        'Async queue fallback is active without Redis queue infrastructure (expected in tests).',
+        `Async queue fallback is active without Redis queue infrastructure for "${queueName}" (expected in tests).`,
       );
       return { jobId };
     }
 
-    const job = await this.queue.add(EXECUTE_SYNC_RUN_JOB, payload, {
+    const job = await queue.add(jobName, payload, {
       jobId,
       attempts: this.defaultAttempts,
       backoff: {
@@ -71,25 +110,6 @@ export class JobsService implements OnModuleDestroy {
     });
 
     return { jobId: String(job.id ?? jobId) };
-  }
-
-  async getBullMqJob(jobId: string): Promise<Job | null> {
-    if (!this.queue) {
-      return null;
-    }
-
-    const job = await this.queue.getJob(jobId);
-    return job ?? null;
-  }
-
-  async onModuleDestroy() {
-    if (this.queue) {
-      await this.queue.close();
-    }
-  }
-
-  private shouldUseRedisQueueInfrastructure() {
-    return this.isAsyncMode() && !this.isTestEnv;
   }
 
   private getQueueModeFromConfig(): 'sync' | 'async' {

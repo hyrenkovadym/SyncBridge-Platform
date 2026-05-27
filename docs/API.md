@@ -1,4 +1,4 @@
-# SyncBridge API Reference (Phase 4)
+# SyncBridge API Reference (Phase 5)
 
 Base URL:
 - `http://localhost:4100/api`
@@ -166,7 +166,7 @@ Response shape:
 ```json
 {
   "id": "job-id",
-  "type": "SYNC_RUN",
+  "type": "SYNC_RUN | WEBHOOK_PROCESSING",
   "status": "QUEUED",
   "entityType": "sync_run",
   "entityId": "sync-run-id",
@@ -188,10 +188,23 @@ Access rules:
 - `POST /webhooks/:connectorId/events`
 - `GET /webhooks/events`
 - `GET /webhooks/events/:id`
+- `GET /webhooks/events/:id/job`
+- `POST /webhooks/events/:id/retry`
+- `POST /webhooks/events/:id/process`
 
 Security behavior:
 - Sensitive header redaction.
 - Idempotency support via `X-SyncBridge-Event-ID`.
+
+Processing behavior:
+- `QUEUE_MODE=sync`
+  - intake stores event and processes immediately.
+- `QUEUE_MODE=async`
+  - intake stores event, creates background job (`WEBHOOK_PROCESSING`), enqueues worker job, returns quickly.
+- Lifecycle statuses:
+  - `RECEIVED`, `PROCESSED`, `FAILED`, `IGNORED`
+- No active pipelines for connector:
+  - event becomes `IGNORED`.
 
 ## Dashboard
 - `GET /dashboard/summary`

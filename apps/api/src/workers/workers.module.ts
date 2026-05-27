@@ -4,7 +4,9 @@ import { ConfigModule } from '@nestjs/config';
 import { validateEnv } from '../config/env.validation';
 import { JobsModule } from '../jobs/jobs.module';
 import { SyncRunsModule } from '../sync-runs/sync-runs.module';
+import { WebhooksModule } from '../webhooks/webhooks.module';
 import { SyncRunProcessor } from './sync-run.processor';
+import { WebhookEventProcessor } from './webhook-event.processor';
 
 @Module({
   imports: [
@@ -15,7 +17,8 @@ import { SyncRunProcessor } from './sync-run.processor';
     }),
     JobsModule,
     SyncRunsModule,
+    WebhooksModule,
   ],
-  providers: [SyncRunProcessor],
+  providers: [SyncRunProcessor, WebhookEventProcessor],
 })
 export class WorkersModule {}

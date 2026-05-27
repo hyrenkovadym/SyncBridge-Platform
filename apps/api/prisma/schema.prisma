@@ -53,6 +53,7 @@ enum WebhookEventStatus {
 
 enum BackgroundJobType {
   SYNC_RUN
+  WEBHOOK_PROCESSING
 }
 
 enum BackgroundJobStatus {

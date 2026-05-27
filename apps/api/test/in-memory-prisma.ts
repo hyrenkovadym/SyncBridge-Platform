@@ -371,13 +371,19 @@ export class InMemoryPrismaService {
     },
 
     findMany: async (args: {
-      where?: { ownerId?: string };
+      where?: { ownerId?: string; sourceConnectorId?: string; status?: PipelineStatus };
       orderBy?: { createdAt: 'asc' | 'desc' };
       select?: Record<string, boolean>;
     }) => {
       let items = [...this.pipelines];
       if (args.where?.ownerId) {
         items = items.filter((item) => item.ownerId === args.where?.ownerId);
+      }
+      if (args.where?.sourceConnectorId) {
+        items = items.filter((item) => item.sourceConnectorId === args.where?.sourceConnectorId);
+      }
+      if (args.where?.status) {
+        items = items.filter((item) => item.status === args.where?.status);
       }
       sortByDate(items, 'createdAt', args.orderBy?.createdAt ?? 'desc');
       if (args.select) {
@@ -656,7 +662,7 @@ export class InMemoryPrismaService {
       return output;
     },
 
-    findMany: async (args: {
+    findMany: async (args?: {
       where?: {
         status?: WebhookEventStatus;
         connector?: {
@@ -676,11 +682,11 @@ export class InMemoryPrismaService {
     }) => {
       let items = [...this.webhookEvents];
 
-      if (args.where?.status) {
+      if (args?.where?.status) {
         items = items.filter((item) => item.status === args.where?.status);
       }
 
-      if (args.where?.connector?.ownerId) {
+      if (args?.where?.connector?.ownerId) {
         items = items.filter((item) => {
           if (!item.connectorId) {
             return false;
@@ -690,12 +696,12 @@ export class InMemoryPrismaService {
         });
       }
 
-      sortByDate(items, 'receivedAt', args.orderBy?.receivedAt ?? 'desc');
-      items = paginate(items, args.skip, args.take);
+      sortByDate(items, 'receivedAt', args?.orderBy?.receivedAt ?? 'desc');
+      items = paginate(items, args?.skip, args?.take);
 
       return items.map((item) => {
         const output = cloneValue(item) as Record<string, unknown>;
-        if (args.include?.connector) {
+        if (args?.include?.connector) {
           const connector = item.connectorId
             ? this.connectors.find((entry) => entry.id === item.connectorId)
             : null;
@@ -736,6 +742,19 @@ export class InMemoryPrismaService {
       }
 
       return items.length;
+    },
+
+    update: async (args: { where: { id: string }; data: Partial<WebhookEventEntity> }) => {
+      const index = this.webhookEvents.findIndex((item) => item.id === args.where.id);
+      if (index < 0) {
+        throw new Error('Webhook event not found');
+      }
+      const updated: WebhookEventEntity = {
+        ...this.webhookEvents[index],
+        ...args.data,
+      };
+      this.webhookEvents[index] = updated;
+      return cloneValue(updated);
     },
   };
 

@@ -59,18 +59,37 @@ export class JobStatusService {
       return;
     }
 
-    if (jobType !== BackgroundJobType.SYNC_RUN) {
-      throw new ForbiddenException('You do not have access to this job');
+    if (jobType === BackgroundJobType.SYNC_RUN) {
+      const syncRun = await this.prisma.syncRun.findUnique({
+        where: { id: entityId },
+        include: { pipeline: true },
+      });
+
+      if (!syncRun || syncRun.pipeline.ownerId !== user.sub) {
+        throw new ForbiddenException('You do not have access to this job');
+      }
+      return;
     }
 
-    const syncRun = await this.prisma.syncRun.findUnique({
-      where: { id: entityId },
-      include: { pipeline: true },
-    });
+    if (jobType === BackgroundJobType.WEBHOOK_PROCESSING) {
+      const event = await this.prisma.webhookEvent.findUnique({
+        where: { id: entityId },
+        include: {
+          connector: {
+            select: {
+              ownerId: true,
+            },
+          },
+        },
+      });
 
-    if (!syncRun || syncRun.pipeline.ownerId !== user.sub) {
-      throw new ForbiddenException('You do not have access to this job');
+      if (!event || !event.connector || event.connector.ownerId !== user.sub) {
+        throw new ForbiddenException('You do not have access to this job');
+      }
+      return;
     }
+
+    throw new ForbiddenException('You do not have access to this job');
   }
 
   private isPrivileged(role: UserRole) {

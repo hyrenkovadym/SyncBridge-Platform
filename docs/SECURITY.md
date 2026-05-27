@@ -1,4 +1,4 @@
-# SyncBridge Platform Security Notes (Phase 4)
+# SyncBridge Platform Security Notes (Phase 5)
 
 ## Secrets Policy
 - No real credentials in repo.
@@ -27,9 +27,16 @@
 - Refresh token rotation/revocation supported.
 - Role and ownership controls enforced for preview/run operations.
 
-## Webhook Intake Security (Phase 2 retained)
+## Webhook Intake Security
 - Sensitive header redaction.
 - Idempotency support with `X-SyncBridge-Event-ID`.
+
+## Webhook Processing Security (Phase 5)
+- Webhook events are processed through controlled queue/worker flow in async mode.
+- Duplicate idempotency keys are ignored to prevent duplicate processing.
+- Retry/manual processing endpoints are role and ownership scoped.
+- Public event/job responses store safe error messages only.
+- Processing metadata in audit logs avoids full payload dumps.
 
 ## Current Limitations
 - No cryptographic webhook signature verification yet.

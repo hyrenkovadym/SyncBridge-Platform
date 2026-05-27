@@ -1,4 +1,4 @@
-# Jobs and Queue Processing (Phase 4)
+# Jobs and Queue Processing (Phase 5)
 
 ## Purpose
 Phase 4 adds asynchronous sync-run processing with BullMQ while preserving synchronous fallback behavior.
@@ -18,6 +18,7 @@ Phase 4 adds asynchronous sync-run processing with BullMQ while preserving synch
 - `BULLMQ_BACKOFF_MS=5000`
 
 ## Queue Topology
+### Sync Runs
 - Queue name: `sync-runs`
 - Job name: `execute-sync-run`
 - Payload includes:
@@ -27,6 +28,15 @@ Phase 4 adds asynchronous sync-run processing with BullMQ while preserving synch
   - `requestedByUserId`
   - `requestedByRole`
   - `mockRecords`
+
+### Webhook Processing
+- Queue name: `webhooks`
+- Job name: `process-webhook-event`
+- Payload includes:
+  - `backgroundJobId`
+  - `webhookEventId`
+  - `requestedByUserId` (optional)
+  - `requestedByRole` (optional)
 
 ## Worker Runtime
 Commands:
@@ -44,7 +54,7 @@ Worker module:
 Prisma model: `BackgroundJob`
 
 Main fields:
-- `type` (`SYNC_RUN`)
+- `type` (`SYNC_RUN | WEBHOOK_PROCESSING`)
 - `status` (`QUEUED|PROCESSING|COMPLETED|FAILED`)
 - `entityType`, `entityId`
 - `attempts`
@@ -55,6 +65,9 @@ Main fields:
 ## API Endpoints
 - `GET /api/jobs/:id`
 - `GET /api/sync-runs/:id/job`
+- `GET /api/webhooks/events/:id/job`
+- `POST /api/webhooks/events/:id/retry`
+- `POST /api/webhooks/events/:id/process`
 
 Access rules:
 - `USER`: own resources only
@@ -66,6 +79,16 @@ Access rules:
 3. Worker marks job/run processing.
 4. Worker applies transformation engine and persists valid `SyncedRecord` rows.
 5. Worker finalizes run/job state and counters.
+
+## Webhook Processing Lifecycle
+1. API stores webhook event with redacted headers and status `RECEIVED`.
+2. In async mode, API creates `BackgroundJob` and enqueues `process-webhook-event`.
+3. Worker resolves active pipelines for the source connector.
+4. Worker creates sync runs and applies transformation engine to payload.
+5. Worker finalizes event as:
+   - `PROCESSED` when processing finished
+   - `IGNORED` when no active pipelines
+   - `FAILED` when processing crashes or connector cannot be resolved
 
 ## Retry and Failure Behavior
 - Attempts/backoff are configured by env.

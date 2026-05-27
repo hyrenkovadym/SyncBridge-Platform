@@ -4,7 +4,7 @@
 
 SyncBridge Platform is a production-style portfolio project focused on backend engineering for integration workflows.
 
-Phase 4 introduces BullMQ-based background sync processing with a dedicated worker while preserving sync fallback mode for local/tests.
+Phase 5 introduces webhook processing and retry flow on top of the existing BullMQ worker architecture, while preserving sync fallback mode for local/tests.
 
 ## Current Stack
 - NestJS API
@@ -18,10 +18,20 @@ Phase 4 introduces BullMQ-based background sync processing with a dedicated work
 - Swagger docs
 - Docker Compose
 
-## Phase 4 Highlights
+## Phase 5 Highlights
 - Queue mode toggle:
   - `QUEUE_MODE=sync` executes runs directly (local/test fallback)
   - `QUEUE_MODE=async` enqueues runs to BullMQ
+- Webhook processing queue:
+  - Queue: `webhooks`
+  - Job: `process-webhook-event`
+- Webhook lifecycle:
+  - `RECEIVED -> PROCESSED | FAILED | IGNORED`
+- Webhook retry and manual process endpoints:
+  - `POST /api/webhooks/events/:id/retry`
+  - `POST /api/webhooks/events/:id/process`
+- Webhook background job lookup:
+  - `GET /api/webhooks/events/:id/job`
 - New jobs module and endpoints:
   - `GET /api/jobs/:id`
   - `GET /api/sync-runs/:id/job`
@@ -32,9 +42,14 @@ Phase 4 introduces BullMQ-based background sync processing with a dedicated work
 - Async sync-run lifecycle audit events:
   - `sync_run_queued`, `sync_run_started`, `sync_run_completed`, `sync_run_failed`
   - `background_job_queued`, `background_job_started`, `background_job_completed`, `background_job_failed`
+- Webhook lifecycle audit events:
+  - `webhook_event_processing_queued`, `webhook_event_processing_started`
+  - `webhook_event_processed`, `webhook_event_processing_failed`
+  - `webhook_event_retry_queued`, `webhook_event_ignored`, `webhook_event_duplicate_ignored`
 - Frontend async UX:
   - pipeline run action handles sync/async responses
   - queued jobs are polled and surfaced in `/pipelines` and `/sync-runs`
+  - webhook events page supports retry/process actions and job status visibility
 
 ## Local Setup
 1. Install dependencies:
@@ -89,6 +104,9 @@ Detailed mapping engine documentation:
 
 Detailed jobs/queue documentation:
 - [docs/JOBS.md](docs/JOBS.md)
+
+Detailed webhook processing documentation:
+- [docs/WEBHOOKS.md](docs/WEBHOOKS.md)
 
 ## Roadmap
 See [docs/ROADMAP.md](docs/ROADMAP.md).

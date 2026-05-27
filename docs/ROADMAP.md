@@ -28,9 +28,12 @@
 - Worker process separation
 - Retry/failure strategy via attempts/backoff and safe job status tracking
 
-## Phase 5
-- Webhook processing pipeline orchestration
-- Replay and recovery tooling
+## Phase 5 (Completed)
+- Webhook processing queue (`webhooks`) and worker processor
+- Webhook lifecycle status handling (`RECEIVED`, `PROCESSED`, `FAILED`, `IGNORED`)
+- Retry/manual process endpoints
+- Webhook background job visibility endpoints
+- Webhook-to-pipeline sync run orchestration using transformation engine
 
 ## Phase 6
 - Scheduler and incremental sync checkpoints
