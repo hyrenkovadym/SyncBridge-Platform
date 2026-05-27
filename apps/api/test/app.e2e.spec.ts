@@ -204,6 +204,33 @@ describe('SyncBridge API (e2e)', () => {
       .expect(403);
   });
 
+  it('pipeline create rejects dangerous mapping path', async () => {
+    const auth = await registerUser(app, userOne);
+    const connector = await createConnector(app, auth.accessToken, {
+      name: 'Safe Connector',
+      type: 'DATABASE',
+      configJson: { host: 'db.local' },
+    });
+
+    await request(app.getHttpServer())
+      .post('/api/pipelines')
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .send({
+        name: 'Unsafe Mapping Pipeline',
+        sourceConnectorId: connector.id,
+        targetName: 'unsafe_target',
+        mappingJson: {
+          fields: {
+            email: {
+              path: '__proto__.polluted',
+              type: 'string',
+            },
+          },
+        },
+      })
+      .expect(400);
+  });
+
   it('running pipeline with mockRecords creates synced records and summary counts', async () => {
     const auth = await registerUser(app, userOne);
     const connector = await createConnector(app, auth.accessToken, {
@@ -216,8 +243,10 @@ describe('SyncBridge API (e2e)', () => {
       sourceConnectorId: connector.id,
       targetName: 'contacts',
       mappingJson: {
-        email: 'contact.email',
-        name: 'contact.name',
+        fields: {
+          email: { path: 'email', required: true, type: 'string', trim: true, lowercase: true },
+          fullName: { path: 'name', default: 'Unknown', type: 'string', trim: true },
+        },
       },
     });
 
@@ -243,9 +272,150 @@ describe('SyncBridge API (e2e)', () => {
 
     const records = await prisma.syncedRecord.findMany({ where: { syncRunId: runResponse.body.id as string } });
     expect(records).toHaveLength(1);
-    expect((records[0].normalizedJson as { contact?: { email?: string } }).contact?.email).toBe(
-      'test@example.com',
-    );
+    expect((records[0].normalizedJson as { email?: string }).email).toBe('test@example.com');
+    expect((records[0].normalizedJson as { fullName?: string }).fullName).toBe('Test User');
+  });
+
+  it('failed transformed record increments recordsFailed', async () => {
+    const auth = await registerUser(app, userOne);
+    const connector = await createConnector(app, auth.accessToken, {
+      name: 'Failure Source',
+      type: 'JSON_UPLOAD',
+      configJson: { mode: 'test' },
+    });
+    const pipeline = await createPipeline(app, auth.accessToken, {
+      name: 'Failure Pipeline',
+      sourceConnectorId: connector.id,
+      targetName: 'contacts',
+      mappingJson: {
+        fields: {
+          email: { path: 'email', required: true, type: 'string' },
+        },
+      },
+    });
+
+    const runResponse = await request(app.getHttpServer())
+      .post(`/api/pipelines/${pipeline.id}/runs`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .send({
+        mockRecords: [
+          {
+            externalId: 'missing-email',
+            raw: {},
+          },
+        ],
+      })
+      .expect(201);
+
+    expect(runResponse.body.summary.recordsReceived).toBe(1);
+    expect(runResponse.body.summary.recordsProcessed).toBe(0);
+    expect(runResponse.body.summary.recordsFailed).toBe(1);
+    expect(runResponse.body.status).toBe('FAILED');
+  });
+
+  it('preview transforms records without creating sync run', async () => {
+    const auth = await registerUser(app, userOne);
+    const connector = await createConnector(app, auth.accessToken, {
+      name: 'Preview Source',
+      type: 'WEBHOOK',
+      configJson: { endpoint: '/preview' },
+    });
+    const pipeline = await createPipeline(app, auth.accessToken, {
+      name: 'Preview Pipeline',
+      sourceConnectorId: connector.id,
+      targetName: 'contacts',
+      mappingJson: {
+        fields: {
+          email: { path: 'contact.email', required: true, type: 'string', trim: true, lowercase: true },
+          isActive: { path: 'active', type: 'boolean', default: true },
+        },
+      },
+    });
+
+    const previewResponse = await request(app.getHttpServer())
+      .post(`/api/pipelines/${pipeline.id}/preview`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .send({
+        records: [
+          {
+            externalId: '1',
+            raw: {
+              contact: { email: ' USER@EXAMPLE.COM ' },
+              active: 'true',
+            },
+          },
+        ],
+      })
+      .expect(201);
+
+    expect(previewResponse.body.summary.recordsReceived).toBe(1);
+    expect(previewResponse.body.summary.recordsValid).toBe(1);
+    expect(previewResponse.body.summary.recordsInvalid).toBe(0);
+    expect(previewResponse.body.results[0].normalized.email).toBe('user@example.com');
+    expect(previewResponse.body.results[0].normalized.isActive).toBe(true);
+
+    const runs = await request(app.getHttpServer())
+      .get(`/api/pipelines/${pipeline.id}/runs`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .expect(200);
+
+    expect(runs.body).toHaveLength(0);
+  });
+
+  it("user cannot preview another user's pipeline", async () => {
+    const authOne = await registerUser(app, userOne);
+    const authTwo = await registerUser(app, userTwo);
+
+    const connector = await createConnector(app, authOne.accessToken, {
+      name: 'Private Preview Connector',
+      type: 'WEBHOOK',
+      configJson: { endpoint: '/private-preview' },
+    });
+    const pipeline = await createPipeline(app, authOne.accessToken, {
+      name: 'Private Preview Pipeline',
+      sourceConnectorId: connector.id,
+      targetName: 'contacts',
+      mappingJson: {
+        fields: {
+          email: { path: 'contact.email', required: true, type: 'string' },
+        },
+      },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/api/pipelines/${pipeline.id}/preview`)
+      .set('Authorization', `Bearer ${authTwo.accessToken}`)
+      .send({
+        records: [
+          {
+            externalId: '1',
+            raw: { contact: { email: 'other@example.com' } },
+          },
+        ],
+      })
+      .expect(403);
+  });
+
+  it('mapping validation rejects dangerous paths', async () => {
+    const auth = await registerUser(app, userOne);
+
+    const response = await request(app.getHttpServer())
+      .post('/api/pipelines/validate-mapping')
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .send({
+        mappingJson: {
+          fields: {
+            email: {
+              path: '__proto__.polluted',
+              type: 'string',
+            },
+          },
+        },
+      })
+      .expect(201);
+
+    expect(response.body.valid).toBe(false);
+    expect(response.body.errors.join(' ')).toContain('unsafe segment');
   });
 
   it('global sync runs listing respects ownership', async () => {

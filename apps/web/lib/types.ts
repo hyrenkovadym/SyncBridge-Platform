@@ -124,3 +124,32 @@ export interface DashboardSummary {
   latestRuns: SyncRun[];
   latestWebhookEvents: WebhookEvent[];
 }
+
+export interface TransformationPreviewError {
+  field: string;
+  code: string;
+  message: string;
+  path?: string;
+}
+
+export interface TransformationPreviewResult {
+  externalId?: string;
+  raw: Record<string, unknown>;
+  normalized: Record<string, unknown>;
+  errors: TransformationPreviewError[];
+}
+
+export interface TransformationPreviewResponse {
+  pipelineId: string;
+  results: TransformationPreviewResult[];
+  summary: {
+    recordsReceived: number;
+    recordsValid: number;
+    recordsInvalid: number;
+  };
+}
+
+export interface MappingValidationResponse {
+  valid: boolean;
+  errors: string[];
+}

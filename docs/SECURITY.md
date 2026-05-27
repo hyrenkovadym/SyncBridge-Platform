@@ -1,70 +1,41 @@
-# SyncBridge Platform Security Notes (Phase 2)
+# SyncBridge Platform Security Notes (Phase 3)
 
-## No Secrets Policy
-- Never commit real credentials, API keys, refresh tokens, or private company data.
-- `.env.example` contains placeholders only.
-- Use local `.env` for development-only secrets.
+## Secrets Policy
+- No real credentials in repo.
+- `configJson` rejects secret-like keys.
+- Use external secret manager in production.
 
-## Connector Configuration Policy
-- `configJson` is allowed only for non-sensitive operational metadata.
-- Secret-like keys are rejected (for example `password`, `token`, `apiKey`, `secret`, `privateKey`, `accessToken`, `refreshToken`).
-- Error message:
-  - `Connector credentials must not be stored in configJson. Use a secret manager in production.`
+## Transformation Safety
+- Nested path operations reject dangerous segments:
+  - `__proto__`
+  - `prototype`
+  - `constructor`
+- This protects against prototype pollution vectors in mapping paths.
 
-Production recommendation:
-- Use a dedicated secret manager (Vault, AWS Secrets Manager, GCP Secret Manager, Azure Key Vault).
+## Mapping Validation Controls
+- Mapping payload is validated before pipeline create/update and via explicit validation endpoint.
+- Unsupported types are rejected.
+- Unsafe paths are rejected.
 
-## JWT and Session Security
-- Access tokens are short-lived.
-- Refresh tokens are stored hashed in database records.
-- `POST /auth/refresh` rotates refresh tokens and revokes prior token record.
-- `POST /auth/logout` revokes current refresh token.
-- Token hashes are never exposed via API responses.
+## Data Handling
+- Preview endpoint does not persist sync runs or records.
+- Transformation audit metadata includes counts and identifiers, not full raw payload dumps.
 
-## Webhook Intake Hardening
-- Intake endpoint remains public by design:
-  - `POST /api/webhooks/:connectorId/events`
-- Phase 2 protections:
-  - payload size check
-  - header capture with sensitive header redaction
-  - idempotency key support via `X-SyncBridge-Event-ID`
-  - duplicate event protection per connector reference
+## Auth and RBAC
+- Access token + refresh token flow in place.
+- Refresh token rotation/revocation supported.
+- Role and ownership controls enforced for preview/run operations.
 
-### Redacted Header Keys
-- `authorization`
-- `cookie`
-- `x-api-key`
-- `x-auth-token`
+## Webhook Intake Security (Phase 2 retained)
+- Sensitive header redaction.
+- Idempotency support with `X-SyncBridge-Event-ID`.
 
-## Access Control
-Roles:
-- `USER`
-- `OPERATOR`
-- `ADMIN`
+## Current Limitations
+- No cryptographic webhook signature verification yet.
+- No field-level data masking in persisted payloads yet.
+- No asynchronous isolation layer for transformation execution yet.
 
-Ownership enforcement:
-- Users only see own connectors/pipelines/runs/webhook events.
-- Privileged roles can view global datasets.
-- Status updates are owner-or-privileged.
-
-## Audit Coverage (Phase 2)
-Audit events include:
-- `user_registered`
-- `user_logged_in`
-- `user_logged_out`
-- `refresh_token_rotated`
-- `connector_created`
-- `connector_status_updated`
-- `pipeline_created`
-- `pipeline_status_updated`
-- `sync_run_created`
-- `synced_record_created`
-- `webhook_event_received`
-- `webhook_event_duplicate_ignored`
-
-## Future Security Work
-- Webhook signature verification
-- Replay protection windows and nonce tracking
-- Rate limiting and abuse controls
-- Encryption strategy for sensitive payload fields
-- Centralized security monitoring + alerting
+## Next Security Priorities
+- Queue isolation and retry controls in Phase 4.
+- Signature verification and replay windows for webhook providers.
+- Extended observability and alerting around transformation failures.

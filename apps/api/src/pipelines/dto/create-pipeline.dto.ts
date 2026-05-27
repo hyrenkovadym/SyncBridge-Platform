@@ -27,8 +27,15 @@ export class CreatePipelineDto {
 
   @ApiProperty({
     example: {
-      externalEmail: 'email',
-      externalName: 'fullName',
+      fields: {
+        email: {
+          path: 'contact.email',
+          required: true,
+          type: 'string',
+          trim: true,
+          lowercase: true,
+        },
+      },
     },
   })
   @IsObject()

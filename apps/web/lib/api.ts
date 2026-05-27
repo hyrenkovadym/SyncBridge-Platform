@@ -12,11 +12,13 @@ import {
   ConnectorStatus,
   ConnectorType,
   DashboardSummary,
+  MappingValidationResponse,
   PaginatedResponse,
   SyncPipeline,
   SyncRun,
   SyncRunStatus,
   TokenPairResponse,
+  TransformationPreviewResponse,
   WebhookEvent,
 } from './types';
 
@@ -205,6 +207,10 @@ export const api = {
     return requestApi<SyncPipeline[]>('/pipelines');
   },
 
+  async getPipeline(pipelineId: string) {
+    return requestApi<SyncPipeline>(`/pipelines/${pipelineId}`);
+  },
+
   async createPipeline(payload: {
     name: string;
     description?: string;
@@ -234,6 +240,25 @@ export const api = {
     return requestApi<SyncRun>(`/pipelines/${pipelineId}/runs`, {
       method: 'POST',
       body: payload ?? {},
+    });
+  },
+
+  async previewPipelineTransformation(
+    pipelineId: string,
+    payload: {
+      records: Array<{ externalId?: string; raw: Record<string, unknown> }>;
+    },
+  ) {
+    return requestApi<TransformationPreviewResponse>(`/pipelines/${pipelineId}/preview`, {
+      method: 'POST',
+      body: payload,
+    });
+  },
+
+  async validateMapping(mappingJson: Record<string, unknown>) {
+    return requestApi<MappingValidationResponse>('/pipelines/validate-mapping', {
+      method: 'POST',
+      body: { mappingJson },
     });
   },
 

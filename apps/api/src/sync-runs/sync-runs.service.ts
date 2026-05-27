@@ -1,10 +1,12 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma, SyncRunStatus, UserRole } from '@prisma/client';
 
 import { AuditService } from '../audit/audit.service';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { PipelinesService } from '../pipelines/pipelines.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { MappingValidationError } from '../transformations/transformation-errors';
+import { TransformationEngineService } from '../transformations/transformation-engine.service';
 import { CreateSyncRunDto } from './dto/create-sync-run.dto';
 import { ListSyncRunsQueryDto } from './dto/list-sync-runs-query.dto';
 
@@ -14,6 +16,7 @@ export class SyncRunsService {
     private readonly prisma: PrismaService,
     private readonly pipelinesService: PipelinesService,
     private readonly auditService: AuditService,
+    private readonly transformationEngine: TransformationEngineService,
   ) {}
 
   async createForPipeline(pipelineId: string, dto: CreateSyncRunDto, user: AuthenticatedUser) {
@@ -32,13 +35,33 @@ export class SyncRunsService {
     });
 
     const mockRecords = dto.mockRecords ?? dto.sampleRecords ?? [];
+    const compiledMapping = this.compileMappingOrThrow(pipeline.mappingJson as Record<string, unknown>);
     let createdCount = 0;
     let failedCount = 0;
+    let totalErrorCount = 0;
 
     for (const record of mockRecords) {
+      const raw = this.ensureRecordObject(record.raw);
+      const transformed = this.transformationEngine.transformRecordWithCompiledMapping(raw, compiledMapping);
+      totalErrorCount += transformed.errors.length;
+
+      if (transformed.errors.length > 0) {
+        failedCount += 1;
+        await this.auditService.log({
+          action: 'transformation_failed',
+          entityType: 'sync_run',
+          entityId: initialRun.id,
+          actor: user,
+          metadataJson: {
+            pipelineId: pipeline.id,
+            externalId: record.externalId ?? null,
+            errorCount: transformed.errors.length,
+          },
+        });
+        continue;
+      }
+
       try {
-        const raw = this.ensureRecordObject(record.raw);
-        const normalized = this.mapRecord(pipeline.mappingJson as Record<string, unknown>, raw);
         const syncedRecord = await this.prisma.syncedRecord.create({
           data: {
             pipelineId: pipeline.id,
@@ -46,11 +69,21 @@ export class SyncRunsService {
             externalId: record.externalId ?? null,
             sourceType: 'MANUAL',
             rawJson: raw as Prisma.InputJsonValue,
-            normalizedJson: normalized as Prisma.InputJsonValue,
+            normalizedJson: transformed.normalized as Prisma.InputJsonValue,
           },
         });
 
         createdCount += 1;
+        await this.auditService.log({
+          action: 'transformation_applied',
+          entityType: 'sync_run',
+          entityId: initialRun.id,
+          actor: user,
+          metadataJson: {
+            pipelineId: pipeline.id,
+            externalId: record.externalId ?? null,
+          },
+        });
         await this.auditService.log({
           action: 'synced_record_created',
           entityType: 'synced_record',
@@ -70,7 +103,7 @@ export class SyncRunsService {
     const completedRun = await this.prisma.syncRun.update({
       where: { id: initialRun.id },
       data: {
-        status: SyncRunStatus.SUCCESS,
+        status: failedCount > 0 ? SyncRunStatus.FAILED : SyncRunStatus.SUCCESS,
         recordsReceived: mockRecords.length,
         recordsProcessed: createdCount,
         recordsFailed: failedCount,
@@ -88,6 +121,7 @@ export class SyncRunsService {
         recordsReceived: completedRun.recordsReceived,
         recordsProcessed: completedRun.recordsProcessed,
         recordsFailed: completedRun.recordsFailed,
+        errorCount: totalErrorCount,
       },
     });
 
@@ -215,67 +249,14 @@ export class SyncRunsService {
     return value as Record<string, unknown>;
   }
 
-  private mapRecord(
-    mappingJson: Record<string, unknown>,
-    rawRecord: Record<string, unknown>,
-  ): Record<string, unknown> {
-    const mapped: Record<string, unknown> = {};
-    const mappings = Object.entries(mappingJson).filter(
-      ([sourcePath, targetPath]) =>
-        sourcePath.trim().length > 0 &&
-        typeof targetPath === 'string' &&
-        targetPath.trim().length > 0,
-    );
-
-    if (mappings.length === 0) {
-      return structuredClone(rawRecord);
-    }
-
-    for (const [sourcePath, targetPathValue] of mappings) {
-      const targetPath = targetPathValue as string;
-      const value = this.getByPath(rawRecord, sourcePath);
-      if (value === undefined) {
-        continue;
+  private compileMappingOrThrow(mappingJson: Record<string, unknown>) {
+    try {
+      return this.transformationEngine.compileMapping(mappingJson);
+    } catch (error) {
+      if (error instanceof MappingValidationError) {
+        throw new BadRequestException(error.errors.map((item) => item.message));
       }
-      this.setByPath(mapped, targetPath, value);
+      throw error;
     }
-
-    return mapped;
-  }
-
-  private getByPath(source: Record<string, unknown>, path: string): unknown {
-    const keys = path.split('.').map((part) => part.trim()).filter(Boolean);
-    if (keys.length === 0) {
-      return undefined;
-    }
-
-    let current: unknown = source;
-    for (const key of keys) {
-      if (!current || typeof current !== 'object' || Array.isArray(current)) {
-        return undefined;
-      }
-      current = (current as Record<string, unknown>)[key];
-    }
-
-    return current;
-  }
-
-  private setByPath(target: Record<string, unknown>, path: string, value: unknown) {
-    const keys = path.split('.').map((part) => part.trim()).filter(Boolean);
-    if (keys.length === 0) {
-      return;
-    }
-
-    let current = target;
-    for (let index = 0; index < keys.length - 1; index += 1) {
-      const key = keys[index];
-      const existing = current[key];
-      if (!existing || typeof existing !== 'object' || Array.isArray(existing)) {
-        current[key] = {};
-      }
-      current = current[key] as Record<string, unknown>;
-    }
-
-    current[keys[keys.length - 1]] = value;
   }
 }

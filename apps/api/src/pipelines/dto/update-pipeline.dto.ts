@@ -37,7 +37,13 @@ export class UpdatePipelineDto {
 
   @ApiPropertyOptional({
     example: {
-      externalPhone: 'phone',
+      fields: {
+        isActive: {
+          path: 'active',
+          type: 'boolean',
+          default: true,
+        },
+      },
     },
   })
   @IsOptional()

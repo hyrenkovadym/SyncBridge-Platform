@@ -1,10 +1,13 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PipelineStatus, Prisma, SyncPipeline, UserRole } from '@prisma/client';
 
 import { AuditService } from '../audit/audit.service';
 import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interface';
 import { ConnectorsService } from '../connectors/connectors.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { MappingValidationError } from '../transformations/transformation-errors';
+import { PreviewTransformationDto } from '../transformations/dto/preview-transformation.dto';
+import { TransformationEngineService } from '../transformations/transformation-engine.service';
 import { CreatePipelineDto } from './dto/create-pipeline.dto';
 import { UpdatePipelineDto } from './dto/update-pipeline.dto';
 
@@ -14,9 +17,12 @@ export class PipelinesService {
     private readonly prisma: PrismaService,
     private readonly connectorsService: ConnectorsService,
     private readonly auditService: AuditService,
+    private readonly transformationEngine: TransformationEngineService,
   ) {}
 
   async create(dto: CreatePipelineDto, user: AuthenticatedUser) {
+    this.assertValidMapping(dto.mappingJson);
+
     const connector = await this.connectorsService.getById(dto.sourceConnectorId);
     if (!this.isPrivileged(user.role) && connector.ownerId !== user.sub) {
       throw new ForbiddenException('You can only use your own connector');
@@ -65,6 +71,10 @@ export class PipelinesService {
   async update(id: string, dto: UpdatePipelineDto, user: AuthenticatedUser) {
     const existing = await this.getById(id);
     this.assertCanAccess(existing, user);
+
+    if (dto.mappingJson) {
+      this.assertValidMapping(dto.mappingJson);
+    }
 
     if (dto.sourceConnectorId) {
       const connector = await this.connectorsService.getById(dto.sourceConnectorId);
@@ -132,6 +142,58 @@ export class PipelinesService {
     return pipeline;
   }
 
+  async previewTransformation(
+    pipelineId: string,
+    dto: PreviewTransformationDto,
+    user: AuthenticatedUser,
+  ) {
+    const pipeline = await this.findOne(pipelineId, user);
+    const compiledMapping = this.compileMappingOrThrow(pipeline.mappingJson as Record<string, unknown>);
+    const records = dto.records ?? [];
+
+    const results = records.map((record) => {
+      const raw = this.ensureRecordObject(record.raw);
+      const transformed = this.transformationEngine.transformRecordWithCompiledMapping(raw, compiledMapping);
+      return {
+        externalId: record.externalId,
+        raw,
+        normalized: transformed.normalized,
+        errors: transformed.errors,
+      };
+    });
+
+    const recordsInvalid = results.filter((item) => item.errors.length > 0).length;
+    const recordsValid = records.length - recordsInvalid;
+
+    await this.auditService.log({
+      action: 'transformation_preview_run',
+      entityType: 'pipeline',
+      entityId: pipeline.id,
+      actor: user,
+      metadataJson: {
+        pipelineId: pipeline.id,
+        recordsReceived: records.length,
+        recordsValid,
+        recordsInvalid,
+        errorCount: results.reduce((acc, item) => acc + item.errors.length, 0),
+      },
+    });
+
+    return {
+      pipelineId: pipeline.id,
+      results,
+      summary: {
+        recordsReceived: records.length,
+        recordsValid,
+        recordsInvalid,
+      },
+    };
+  }
+
+  validateMapping(mappingJson: Record<string, unknown>) {
+    return this.transformationEngine.validateMapping(mappingJson);
+  }
+
   private assertCanAccess(pipeline: SyncPipeline, user: AuthenticatedUser) {
     if (!this.isPrivileged(user.role) && pipeline.ownerId !== user.sub) {
       throw new ForbiddenException('You do not have access to this pipeline');
@@ -140,5 +202,30 @@ export class PipelinesService {
 
   private isPrivileged(role: UserRole) {
     return role === UserRole.OPERATOR || role === UserRole.ADMIN;
+  }
+
+  private assertValidMapping(mappingJson: Record<string, unknown>) {
+    const result = this.transformationEngine.validateMapping(mappingJson);
+    if (!result.valid) {
+      throw new BadRequestException(result.errors);
+    }
+  }
+
+  private compileMappingOrThrow(mappingJson: Record<string, unknown>) {
+    try {
+      return this.transformationEngine.compileMapping(mappingJson);
+    } catch (error) {
+      if (error instanceof MappingValidationError) {
+        throw new BadRequestException(error.errors.map((item) => item.message));
+      }
+      throw error;
+    }
+  }
+
+  private ensureRecordObject(value: unknown): Record<string, unknown> {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) {
+      return {};
+    }
+    return value as Record<string, unknown>;
   }
 }

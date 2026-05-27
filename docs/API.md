@@ -1,4 +1,4 @@
-# SyncBridge API Reference (Phase 2)
+# SyncBridge API Reference (Phase 3)
 
 Base URL:
 - `http://localhost:4100/api`
@@ -17,34 +17,6 @@ Swagger:
 - `POST /auth/refresh`
 - `POST /auth/logout`
 
-### Register/Login Response
-```json
-{
-  "accessToken": "...",
-  "refreshToken": "...",
-  "user": {
-    "id": "...",
-    "email": "user@example.com",
-    "fullName": "User",
-    "role": "USER"
-  }
-}
-```
-
-### Refresh Request
-```json
-{
-  "refreshToken": "..."
-}
-```
-
-### Logout Request
-```json
-{
-  "refreshToken": "..."
-}
-```
-
 ## Connectors
 - `POST /connectors`
 - `GET /connectors`
@@ -52,33 +24,9 @@ Swagger:
 - `PATCH /connectors/:id`
 - `PATCH /connectors/:id/status`
 
-### Connector Create/Update Rules
-- `name` is required for create.
-- `type` is required for create.
+Connector config policy:
 - `configJson` must be an object.
-- `configJson` must not contain secret-like keys such as:
-  - `password`
-  - `token`
-  - `apiKey`
-  - `secret`
-  - `privateKey`
-  - `accessToken`
-  - `refreshToken`
-
-Violation error:
-- `Connector credentials must not be stored in configJson. Use a secret manager in production.`
-
-### Connector Status Endpoint
-`PATCH /connectors/:id/status`
-```json
-{
-  "status": "PAUSED"
-}
-```
-Allowed values:
-- `ACTIVE`
-- `PAUSED`
-- `ERROR`
+- Secret-like keys are rejected (`password`, `token`, `apiKey`, etc.).
 
 ## Pipelines
 - `POST /pipelines`
@@ -86,18 +34,83 @@ Allowed values:
 - `GET /pipelines/:id`
 - `PATCH /pipelines/:id`
 - `PATCH /pipelines/:id/status`
+- `POST /pipelines/:id/preview`
+- `POST /pipelines/validate-mapping`
 
-### Pipeline Status Endpoint
-`PATCH /pipelines/:id/status`
+### Mapping Format (Primary)
 ```json
 {
-  "status": "ARCHIVED"
+  "fields": {
+    "email": { "path": "contact.email", "required": true, "type": "string" },
+    "fullName": { "path": "contact.name", "default": "Unknown", "type": "string" },
+    "amount": { "path": "invoice.total", "type": "number" },
+    "isActive": { "path": "active", "type": "boolean", "default": true }
+  }
 }
 ```
-Allowed values:
-- `ACTIVE`
-- `PAUSED`
-- `ARCHIVED`
+
+Supported field options:
+- `path`
+- `required`
+- `default`
+- `type`: `string | number | boolean | date | json`
+- `trim`, `lowercase`, `uppercase` (for strings)
+- `compute`: `now | uuid` (simple deterministic computed values)
+
+### Validate Mapping
+`POST /pipelines/validate-mapping`
+
+Request:
+```json
+{
+  "mappingJson": { "fields": { "email": { "path": "contact.email", "type": "string" } } }
+}
+```
+
+Response:
+```json
+{
+  "valid": true,
+  "errors": []
+}
+```
+
+### Preview Transformation
+`POST /pipelines/:id/preview`
+
+Request:
+```json
+{
+  "records": [
+    {
+      "externalId": "1",
+      "raw": {
+        "contact": { "email": "USER@EXAMPLE.COM" }
+      }
+    }
+  ]
+}
+```
+
+Response:
+```json
+{
+  "pipelineId": "...",
+  "results": [
+    {
+      "externalId": "1",
+      "raw": { "contact": { "email": "USER@EXAMPLE.COM" } },
+      "normalized": { "email": "user@example.com" },
+      "errors": []
+    }
+  ],
+  "summary": {
+    "recordsReceived": 1,
+    "recordsValid": 1,
+    "recordsInvalid": 0
+  }
+}
+```
 
 ## Sync Runs
 - `POST /pipelines/:id/runs`
@@ -105,68 +118,38 @@ Allowed values:
 - `GET /sync-runs/:id`
 - `GET /sync-runs`
 
-### Create Sync Run Request
+Run creation (`POST /pipelines/:id/runs`) accepts:
 ```json
 {
   "mockRecords": [
     {
       "externalId": "1",
       "raw": {
-        "email": "test@example.com",
-        "name": "Test User"
+        "contact": { "email": "user@example.com" }
       }
     }
   ]
 }
 ```
 
-### Run Behavior
-- Creates `SyncRun` row.
-- Creates `SyncedRecord` rows for `mockRecords`.
-- Applies simple `mappingJson` field mapping where possible.
-- Returns run counters and summary.
-
-### Global Runs Query Params
-- `page` (default `1`)
-- `limit` (default `20`, max `100`)
-- `status` (optional)
+Behavior:
+- Uses transformation engine per record.
+- Persists `SyncedRecord` only for valid transformed records.
+- Updates run counters (`recordsReceived`, `recordsProcessed`, `recordsFailed`).
+- Run status becomes `FAILED` if at least one record fails transformation.
 
 ## Webhooks
 - `POST /webhooks/:connectorId/events`
 - `GET /webhooks/events`
 - `GET /webhooks/events/:id`
 
-### Intake Headers
-- Optional idempotency header: `X-SyncBridge-Event-ID`
-
-Duplicate behavior:
-- If the same event ID is received for the same connector reference, API returns existing event as duplicate.
-
-### Sensitive Header Redaction
-Headers are redacted for sensitive names:
-- `authorization`
-- `cookie`
-- `x-api-key`
-- `x-auth-token`
-
-### Webhook Listing Query Params
-- `page` (default `1`)
-- `limit` (default `20`, max `100`)
-- `status` (optional)
+Security behavior:
+- Sensitive header redaction.
+- Idempotency support via `X-SyncBridge-Event-ID`.
 
 ## Dashboard
 - `GET /dashboard/summary`
 
-Response fields:
-- `connectorsCount`
-- `pipelinesCount`
-- `syncRunsCount`
-- `webhookEventsCount`
-- `failedRunsCount`
-- `latestRuns`
-- `latestWebhookEvents`
-
-## Access Control Summary
-- `USER`: sees own connectors/pipelines/runs/webhook events.
-- `OPERATOR` and `ADMIN`: can view global data.
-- Status updates are owner-or-privileged.
+## Access Rules
+- `USER`: own resources only.
+- `OPERATOR`, `ADMIN`: global visibility where allowed.

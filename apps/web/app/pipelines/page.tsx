@@ -125,7 +125,9 @@ export default function PipelinesPage() {
             <tbody>
               {pipelines.map((pipeline) => (
                 <tr key={pipeline.id}>
-                  <td>{pipeline.name}</td>
+                  <td>
+                    <Link href={`/pipelines/${pipeline.id}`}>{pipeline.name}</Link>
+                  </td>
                   <td>{connectorNameMap[pipeline.sourceConnectorId] ?? pipeline.sourceConnectorId}</td>
                   <td>{pipeline.targetName}</td>
                   <td>{pipeline.status}</td>

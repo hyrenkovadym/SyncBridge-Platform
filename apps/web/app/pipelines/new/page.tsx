@@ -6,6 +6,27 @@ import { FormEvent, useEffect, useState } from 'react';
 import { ApiError, api } from '../../../lib/api';
 import { Connector } from '../../../lib/types';
 
+const DEFAULT_MAPPING = `{
+  "fields": {
+    "email": { "path": "contact.email", "required": true, "type": "string", "trim": true, "lowercase": true },
+    "fullName": { "path": "contact.name", "default": "Unknown", "type": "string", "trim": true },
+    "amount": { "path": "invoice.total", "type": "number" },
+    "isActive": { "path": "active", "type": "boolean", "default": true },
+    "ingestedAt": { "path": "meta.any", "type": "date", "compute": "now" }
+  }
+}`;
+
+const DEFAULT_SAMPLE_RAW = `{
+  "contact": {
+    "email": "  USER@EXAMPLE.COM  ",
+    "name": " Test User "
+  },
+  "invoice": {
+    "total": "42.50"
+  },
+  "active": "true"
+}`;
+
 export default function NewPipelinePage() {
   const router = useRouter();
   const [connectors, setConnectors] = useState<Connector[]>([]);
@@ -15,9 +36,12 @@ export default function NewPipelinePage() {
   const [description, setDescription] = useState('');
   const [sourceConnectorId, setSourceConnectorId] = useState('');
   const [targetName, setTargetName] = useState('');
-  const [mappingJsonText, setMappingJsonText] = useState('{\n  "email": "contact.email",\n  "name": "contact.name"\n}');
+  const [mappingJsonText, setMappingJsonText] = useState(DEFAULT_MAPPING);
+  const [sampleRawText, setSampleRawText] = useState(DEFAULT_SAMPLE_RAW);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [mappingValidation, setMappingValidation] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isValidatingMapping, setIsValidatingMapping] = useState(false);
 
   useEffect(() => {
     const loadConnectors = async () => {
@@ -43,9 +67,53 @@ export default function NewPipelinePage() {
     void loadConnectors();
   }, []);
 
+  const parseMappingJson = () => {
+    const parsed = JSON.parse(mappingJsonText) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      throw new Error('mappingJson must be a valid JSON object.');
+    }
+    return parsed as Record<string, unknown>;
+  };
+
+  const validateMapping = async () => {
+    setErrorMessage(null);
+    setMappingValidation(null);
+
+    let mappingJson: Record<string, unknown>;
+    try {
+      mappingJson = parseMappingJson();
+      const sampleRaw = JSON.parse(sampleRawText) as unknown;
+      if (!sampleRaw || typeof sampleRaw !== 'object' || Array.isArray(sampleRaw)) {
+        throw new Error('Sample raw record must be a valid JSON object.');
+      }
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Invalid JSON input.');
+      return;
+    }
+
+    setIsValidatingMapping(true);
+    try {
+      const result = await api.validateMapping(mappingJson);
+      if (result.valid) {
+        setMappingValidation('Mapping is valid. Save the pipeline, then open detail page to run transformation preview.');
+      } else {
+        setMappingValidation(`Mapping errors: ${result.errors.join(', ')}`);
+      }
+    } catch (error) {
+      if (error instanceof ApiError) {
+        setErrorMessage(error.message);
+      } else {
+        setErrorMessage('Failed to validate mapping.');
+      }
+    } finally {
+      setIsValidatingMapping(false);
+    }
+  };
+
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setErrorMessage(null);
+    setMappingValidation(null);
 
     if (!sourceConnectorId) {
       setErrorMessage('Select a source connector first.');
@@ -54,27 +122,22 @@ export default function NewPipelinePage() {
 
     let mappingJson: Record<string, unknown>;
     try {
-      const parsed = JSON.parse(mappingJsonText) as unknown;
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        setErrorMessage('mappingJson must be a valid JSON object.');
-        return;
-      }
-      mappingJson = parsed as Record<string, unknown>;
-    } catch {
-      setErrorMessage('mappingJson is not valid JSON.');
+      mappingJson = parseMappingJson();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : 'Invalid mapping JSON.');
       return;
     }
 
     setIsSubmitting(true);
     try {
-      await api.createPipeline({
+      const created = await api.createPipeline({
         name,
         description: description || undefined,
         sourceConnectorId,
         targetName,
         mappingJson,
       });
-      router.push('/pipelines');
+      router.push(`/pipelines/${created.id}`);
     } catch (error) {
       if (error instanceof ApiError) {
         setErrorMessage(error.message);
@@ -89,7 +152,7 @@ export default function NewPipelinePage() {
   return (
     <section className="card">
       <h2>New Pipeline</h2>
-      <p>Create a pipeline mapped from connector fields into normalized target structure.</p>
+      <p>Create a pipeline and validate mapping config before previewing transformations.</p>
 
       {loadingConnectors ? <p>Loading connectors...</p> : null}
 
@@ -136,18 +199,34 @@ export default function NewPipelinePage() {
           Mapping JSON
           <textarea
             id="mappingJson"
-            rows={9}
+            rows={14}
             value={mappingJsonText}
             onChange={(event) => setMappingJsonText(event.target.value)}
             required
           />
         </label>
 
-        {errorMessage ? <p className="error-message">{errorMessage}</p> : null}
+        <label htmlFor="sampleRaw">
+          Sample Raw Record (for pre-save validation)
+          <textarea
+            id="sampleRaw"
+            rows={10}
+            value={sampleRawText}
+            onChange={(event) => setSampleRawText(event.target.value)}
+          />
+        </label>
 
-        <button type="submit" disabled={isSubmitting || loadingConnectors || connectors.length === 0}>
-          {isSubmitting ? 'Saving...' : 'Save Pipeline'}
-        </button>
+        <div className="row-actions">
+          <button type="button" onClick={() => void validateMapping()} disabled={isValidatingMapping}>
+            {isValidatingMapping ? 'Validating...' : 'Preview Transformation'}
+          </button>
+          <button type="submit" disabled={isSubmitting || loadingConnectors || connectors.length === 0}>
+            {isSubmitting ? 'Saving...' : 'Save Pipeline'}
+          </button>
+        </div>
+
+        {mappingValidation ? <p>{mappingValidation}</p> : null}
+        {errorMessage ? <p className="error-message">{errorMessage}</p> : null}
       </form>
     </section>
   );
