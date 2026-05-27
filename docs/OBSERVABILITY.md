@@ -1,37 +1,51 @@
-# Observability (Phase 7)
+# Observability Guide (v1.0.0)
 
-## Request ID Flow
-- Reads incoming `X-Request-ID` when valid
-- Generates request ID when missing
-- Sets `X-Request-ID` response header
-- Adds requestId to audit metadata when request context exists
+## Request ID
 
-## Structured Logging
-JSON-style logs include safe fields:
-- `timestamp`
-- `level`
-- `event`
-- `requestId` (when available)
-- `userId` (when available)
-- entity IDs/counters/status/duration when relevant
+- Uses inbound `X-Request-ID` when valid.
+- Generates a request ID when missing.
+- Returns `X-Request-ID` on all responses.
+- Includes requestId in audit metadata when context is available.
 
-No token/secret/header/payload dumps are logged.
+## Structured Logs
 
-## Error Observability
-Global error payload:
-- `statusCode`
-- `message`
-- `path`
-- `timestamp`
-- `requestId`
+API and worker emit JSON-style logs with safe fields:
+- timestamp
+- level
+- event
+- requestId (when present)
+- userId/entity IDs/counters/status
+- durationMs (when applicable)
 
-Internal details are logged server-side only.
+Intentionally excluded:
+- JWT/refresh tokens
+- auth headers/API keys
+- password hashes/secrets
+- full webhook/raw record payload dumps
 
-## Runtime Endpoints
-- `GET /api/health`: liveness
-- `GET /api/ready`: DB + Redis/queue + scheduler readiness summary
+## Safe Error Contract
+
+Global error shape:
+
+```json
+{
+  "statusCode": 400,
+  "message": "Validation failed",
+  "path": "/api/...",
+  "timestamp": "...",
+  "requestId": "..."
+}
+```
+
+Internal stack traces are not exposed in public responses.
+
+## Health and Runtime Endpoints
+
+- `GET /api/health`: liveness check
+- `GET /api/ready`: DB/Redis/queue/scheduler readiness summary
 - `GET /api/system/info`: safe runtime metadata only
 
-## Job/Scheduler Visibility
-- Job APIs expose attempts/duration/start/finish/error safely
-- Scheduler status exposes last tick metrics and last safe error
+## Job and Scheduler Visibility
+
+- Job APIs expose safe operational fields (`attempts`, `durationMs`, timestamps, safe errors)
+- Scheduler status endpoint exposes latest tick metrics and safe error summary

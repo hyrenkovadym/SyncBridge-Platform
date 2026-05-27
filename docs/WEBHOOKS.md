@@ -1,6 +1,7 @@
-# Webhooks (Phase 7)
+# Webhooks Guide (v1.0.0)
 
 ## Endpoints
+
 - `POST /api/webhooks/:connectorId/events`
 - `GET /api/webhooks/events`
 - `GET /api/webhooks/events/:id`
@@ -8,26 +9,41 @@
 - `POST /api/webhooks/events/:id/retry`
 - `POST /api/webhooks/events/:id/process`
 
-## Intake Security
-- Redacts sensitive headers (`authorization`, `cookie`, `x-api-key`, `x-auth-token`)
-- Supports idempotency via `X-SyncBridge-Event-ID`
-- Enforces payload size guard (`PayloadTooLargeException` when exceeded)
+## Intake and Security
 
-## Processing Lifecycle
+- Request headers are captured with redaction for sensitive keys.
+- Idempotency key supported via `X-SyncBridge-Event-ID`.
+- Duplicate events are safely ignored/idempotent.
+- Payload size guard prevents oversized body ingestion.
+
+## Event Lifecycle
+
 - `RECEIVED`
 - `PROCESSED`
 - `FAILED`
 - `IGNORED`
 
-## Queue Integration
-- Sync mode: process immediately
-- Async mode: enqueue `process-webhook-event` and track `BackgroundJob`
+## Processing Flow
 
-## Retry/Manual Controls
-- retry endpoint requires `FAILED`
-- process endpoint only for non-finalized events
-- ownership/RBAC checks enforced
+1. Persist redacted event.
+2. Match active pipelines by source connector.
+3. Create sync run(s).
+4. Apply transformation engine.
+5. Create synced record(s) for valid transformations.
+6. Update event/job/run status and audit logs.
 
-## Future Hardening (Planned)
-- provider signature verification
-- replay-window enforcement
+## Queue Behavior
+
+- Sync mode (`QUEUE_MODE=sync`): process immediately.
+- Async mode (`QUEUE_MODE=async`): enqueue `process-webhook-event` job and track `BackgroundJob`.
+
+## Retry and Manual Process
+
+- Retry endpoint is intended for failed events.
+- Manual process endpoint allows controlled processing for received events.
+- Both endpoints enforce ownership and RBAC checks.
+
+## Future Hardening
+
+- Provider signature verification
+- Replay-window enforcement

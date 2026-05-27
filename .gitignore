@@ -1,19 +1,51 @@
-node_modules
-dist
-.next
-coverage
+# Dependencies
+node_modules/
 
+# Build outputs
+dist/
+.next/
+coverage/
+*.tsbuildinfo
+
+# Environment files
 .env
 .env.local
 .env.*.local
 
-apps/api/prisma/dev.db
-apps/api/prisma/dev.db-journal
-
+# Logs and temp artifacts
+logs/
+*.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 
+# Local runtime data
+apps/api/prisma/dev.db
+apps/api/prisma/dev.db-journal
+
+# IDE / OS
+.vscode/
+.idea/
 .DS_Store
 Thumbs.db
+
+# Credentials / secrets (defense-in-depth)
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.cer
+*.jks
+*.keystore
+*service-account*.json
+*credentials*.json
+*secret*.json
+secrets/
+
+# Docker local volumes or overrides
+.docker/
+docker-data/
+docker-volumes/
+infra/docker-compose.override.yml

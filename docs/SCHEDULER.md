@@ -1,33 +1,39 @@
-# Scheduler (Phase 7)
+# Scheduler Guide (v1.0.0)
 
-## Controls
-- `SCHEDULER_ENABLED`
-- `SCHEDULER_POLL_INTERVAL_SECONDS`
-- `SCHEDULER_LOCK_TTL_SECONDS`
+## Configuration
 
-Scheduler polling runs in worker role only.
+- `SCHEDULER_ENABLED` (default `false`)
+- `SCHEDULER_POLL_INTERVAL_SECONDS` (default `30`)
+- `SCHEDULER_LOCK_TTL_SECONDS` (default `60`)
+
+Scheduler polling is executed by the worker role.
 
 ## Endpoints
+
 - `GET /api/scheduler/status`
 - `PATCH /api/pipelines/:id/schedule`
 - `GET /api/pipelines/:id/schedule`
 - `POST /api/pipelines/:id/schedule/trigger`
 
+## Scheduling Rules
+
+- Only `ACTIVE` pipelines can be scheduled.
+- `PAUSED` and `ARCHIVED` pipelines are skipped.
+- Duplicate enqueue is prevented for already queued/running runs.
+- Cron validation rejects invalid or unsafe schedules.
+
 ## Observability
+
 Scheduler status includes:
-- enabled/process role
+- enabled flag
+- process role
 - poll interval and lock TTL
-- last tick timestamp and duration
-- last due/enqueued/skipped counts
+- last poll timestamp and duration
+- last due/enqueued/skipped counters
 - last safe error message
 
-Audit events:
+Related audit/log events:
 - `scheduler_tick_started`
 - `scheduler_tick_completed`
 - `scheduler_tick_failed`
 - `scheduled_pipeline_skipped`
-
-## Execution Rules
-- only ACTIVE scheduled pipelines are polled
-- PAUSED/ARCHIVED pipelines are skipped
-- duplicate enqueue prevention via active-run check
