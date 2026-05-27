@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, Post, Query, UseGuards } from '@nestjs/common';
 import { ApiBearerAuth, ApiOperation, ApiTags } from '@nestjs/swagger';
 import { UserRole } from '@prisma/client';
 
@@ -8,6 +8,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { Roles } from '../common/decorators/roles.decorator';
 import { RolesGuard } from '../common/guards/roles.guard';
 import { CreateSyncRunDto } from './dto/create-sync-run.dto';
+import { ListSyncRunsQueryDto } from './dto/list-sync-runs-query.dto';
 import { SyncRunsService } from './sync-runs.service';
 
 @ApiTags('sync-runs')
@@ -40,5 +41,12 @@ export class SyncRunsController {
   @ApiOperation({ summary: 'Get sync run by id' })
   getById(@Param('id') id: string, @CurrentUser() user: AuthenticatedUser) {
     return this.syncRunsService.findById(id, user);
+  }
+
+  @Get('sync-runs')
+  @Roles(UserRole.USER, UserRole.OPERATOR, UserRole.ADMIN)
+  @ApiOperation({ summary: 'List sync runs (scope depends on role)' })
+  listGlobal(@Query() query: ListSyncRunsQueryDto, @CurrentUser() user: AuthenticatedUser) {
+    return this.syncRunsService.listAll(query, user);
   }
 }

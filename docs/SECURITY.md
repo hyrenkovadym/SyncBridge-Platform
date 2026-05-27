@@ -1,49 +1,51 @@
-# SyncBridge Platform Security Notes (Phase 1)
+# Security Notes (v1.0.0)
 
-## No Secrets Policy
-- Never commit real credentials, API keys, tokens, or private company data.
-- `.env.example` contains placeholders only.
-- Use local `.env` for development secrets and keep it ignored by git.
+## Repository Hygiene
 
-## Connector Credential Warning
-- `configJson` is intentionally generic in Phase 1.
-- Do not store real credentials in `configJson`.
-- In production, secrets should be fetched from a dedicated secret manager (for example: HashiCorp Vault, AWS Secrets Manager, GCP Secret Manager, Azure Key Vault).
+- No secrets should be committed to git.
+- Sensitive/local artifacts are ignored (`.env`, `.env.local`, `node_modules`, `.next`, `dist`, `coverage`, `logs`, credential-like files).
+- Use `.env.example` as a template only.
 
-## Webhook Security Notes
-- Phase 1 webhook intake endpoint is public by design (`POST /api/webhooks/:connectorId/events`).
-- It stores raw event payloads for later processing only.
-- Future phases should add:
-  - signature verification
-  - replay protection
-  - source allowlists
-  - stricter payload validation
-  - per-connector security policies
+## Authentication and Access Control
 
-## JWT Notes
-- Access and refresh secrets are mandatory environment variables.
-- Passwords are hashed with bcrypt.
-- Refresh token records are stored hashed.
-- Future phases should include:
-  - refresh token rotation and revocation endpoints
-  - secure cookie or hardened client storage strategy
-  - token anomaly detection
+- JWT access + refresh token flow
+- Refresh tokens are stored as hashes
+- RBAC roles: `USER`, `OPERATOR`, `ADMIN`
 
-## RBAC Model
-- Roles in Phase 1:
-  - `USER`
-  - `OPERATOR`
-  - `ADMIN`
-- Ownership checks are enforced for connector/pipeline/sync run access.
-- Privileged roles can view global datasets when required.
+## Connector Policy
 
-## Database and Audit
-- Critical actions are written to `AuditLog` (`user_registered`, `user_logged_in`, connector/pipeline/webhook/sync events).
-- Future work should expand audit coverage and add retention policies.
+Connector `configJson` rejects secret-like keys (for example `password`, `token`, `apiKey`, `secret`, `privateKey`, `accessToken`, `refreshToken`).
 
-## Future Security Recommendations
-- Secret manager integration
-- Rate limiting and abuse protection
-- Data encryption strategy (at rest + in transit + sensitive payload fields)
-- Centralized security monitoring and alerting
-- Dependency and container vulnerability scanning in CI
+Recommendation: use a dedicated secret manager in production.
+
+## Webhook Security
+
+- Sensitive headers are redacted before persistence
+- Idempotency key support via `X-SyncBridge-Event-ID`
+- Payload size guarding is enforced in intake flow
+- Retry/process endpoints are ownership/RBAC-protected
+
+Future hardening: request signature verification and replay protection.
+
+## Error and Logging Safety
+
+- Global error responses are safe and consistent
+- Public responses include `requestId`, not internal stack traces
+- Structured logs intentionally exclude tokens, secrets, auth headers, and raw payload dumps
+
+## Rate Limiting
+
+- In-memory limiter for sensitive routes
+- Good for local/single-instance usage
+- Recommendation: distributed limiter (Redis-backed) in multi-instance production
+
+## Transport Security
+
+- Helmet security headers enabled
+- CORS origins validated from config
+- Production deployment should enforce HTTPS end-to-end
+
+## Frontend Token Storage Note
+
+Current demo frontend uses localStorage token persistence for simplicity.
+Production hardening should evaluate secure cookie-based token handling and stricter session controls.

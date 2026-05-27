@@ -19,4 +19,10 @@ export class HealthController {
   ready() {
     return this.healthService.ready();
   }
+
+  @Get('system/info')
+  @ApiOperation({ summary: 'Safe runtime system information' })
+  systemInfo() {
+    return this.healthService.systemInfo();
+  }
 }

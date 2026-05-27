@@ -1,6 +1,6 @@
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { UserRole } from '@prisma/client';
+import { UserRole, WebhookEventStatus } from '@prisma/client';
 import request from 'supertest';
 
 import { AppModule } from '../src/app.module';
@@ -15,6 +15,9 @@ process.env.REDIS_URL = process.env.REDIS_URL ?? 'redis://localhost:6380';
 process.env.JWT_ACCESS_SECRET = process.env.JWT_ACCESS_SECRET ?? 'test_access_secret';
 process.env.JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET ?? 'test_refresh_secret';
 process.env.CORS_ORIGIN = process.env.CORS_ORIGIN ?? 'http://localhost:3001';
+process.env.BULLMQ_REDIS_URL = process.env.BULLMQ_REDIS_URL ?? 'redis://localhost:6380';
+process.env.BULLMQ_DEFAULT_ATTEMPTS = process.env.BULLMQ_DEFAULT_ATTEMPTS ?? '3';
+process.env.BULLMQ_BACKOFF_MS = process.env.BULLMQ_BACKOFF_MS ?? '5000';
 
 describe('SyncBridge API (e2e)', () => {
   let app: INestApplication;
@@ -33,6 +36,8 @@ describe('SyncBridge API (e2e)', () => {
   };
 
   beforeAll(async () => {
+    process.env.QUEUE_MODE = 'sync';
+
     const prismaMock = new InMemoryPrismaService();
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
@@ -55,7 +60,7 @@ describe('SyncBridge API (e2e)', () => {
     prisma = app.get(PrismaService) as unknown as InMemoryPrismaService;
   });
 
-  beforeEach(async () => {
+  beforeEach(() => {
     prisma.reset();
   });
 
@@ -68,286 +73,1023 @@ describe('SyncBridge API (e2e)', () => {
   it('GET /api/health works', async () => {
     const response = await request(app.getHttpServer()).get('/api/health').expect(200);
     expect(response.body.status).toBe('ok');
-    expect(response.body.service).toBe('syncbridge-api');
+    expect(response.headers['x-request-id']).toBeDefined();
   });
 
   it('GET /api/ready works', async () => {
     const response = await request(app.getHttpServer()).get('/api/ready').expect(200);
     expect(response.body.status).toBe('ready');
     expect(response.body.database).toBe('up');
+    expect(response.body.queueMode).toBeDefined();
+    expect(response.body.scheduler).toEqual(
+      expect.objectContaining({
+        enabled: expect.any(Boolean),
+        processRole: expect.any(String),
+      }),
+    );
   });
 
-  it('user can register', async () => {
-    const response = await request(app.getHttpServer()).post('/api/auth/register').send(userOne).expect(201);
-    expect(response.body.user.email).toBe(userOne.email);
-    expect(response.body.accessToken).toBeDefined();
-  });
-
-  it('user can login', async () => {
-    await request(app.getHttpServer()).post('/api/auth/register').send(userOne).expect(201);
-
+  it('preserves custom X-Request-ID header', async () => {
+    const requestId = 'custom-req-id-12345';
     const response = await request(app.getHttpServer())
-      .post('/api/auth/login')
-      .send({ email: userOne.email, password: userOne.password })
-      .expect(201);
-
-    expect(response.body.user.email).toBe(userOne.email);
-    expect(response.body.accessToken).toBeDefined();
-  });
-
-  it('authenticated user can create connector', async () => {
-    const token = await registerAndGetToken(app, userOne);
-
-    const response = await request(app.getHttpServer())
-      .post('/api/connectors')
-      .set('Authorization', `Bearer ${token}`)
-      .send({
-        name: 'User Connector',
-        type: 'WEBHOOK',
-        configJson: { endpoint: 'https://example.test/webhook' },
-      })
-      .expect(201);
-
-    expect(response.body.name).toBe('User Connector');
-    expect(response.body.ownerId).toBeDefined();
-  });
-
-  it('user sees only own connectors', async () => {
-    const tokenOne = await registerAndGetToken(app, userOne);
-    const tokenTwo = await registerAndGetToken(app, userTwo);
-
-    await request(app.getHttpServer())
-      .post('/api/connectors')
-      .set('Authorization', `Bearer ${tokenOne}`)
-      .send({
-        name: 'Connector A',
-        type: 'WEBHOOK',
-        configJson: { env: 'a' },
-      })
-      .expect(201);
-
-    await request(app.getHttpServer())
-      .post('/api/connectors')
-      .set('Authorization', `Bearer ${tokenTwo}`)
-      .send({
-        name: 'Connector B',
-        type: 'REST_API',
-        configJson: { env: 'b' },
-      })
-      .expect(201);
-
-    const userOneList = await request(app.getHttpServer())
-      .get('/api/connectors')
-      .set('Authorization', `Bearer ${tokenOne}`)
+      .get('/api/health')
+      .set('X-Request-ID', requestId)
       .expect(200);
 
-    expect(userOneList.body).toHaveLength(1);
-    expect(userOneList.body[0].name).toBe('Connector A');
+    expect(response.headers['x-request-id']).toBe(requestId);
   });
 
-  it('authenticated user can create pipeline using own connector', async () => {
-    const token = await registerAndGetToken(app, userOne);
-
-    const connectorResponse = await request(app.getHttpServer())
-      .post('/api/connectors')
-      .set('Authorization', `Bearer ${token}`)
-      .send({
-        name: 'Pipeline Source Connector',
-        type: 'REST_API',
-        configJson: { baseUrl: 'https://example.local' },
-      })
-      .expect(201);
-
+  it('error response includes requestId and omits stack trace', async () => {
     const response = await request(app.getHttpServer())
-      .post('/api/pipelines')
-      .set('Authorization', `Bearer ${token}`)
-      .send({
-        name: 'Pipeline 1',
-        sourceConnectorId: connectorResponse.body.id,
-        targetName: 'contacts_target',
-        mappingJson: { externalName: 'fullName' },
-      })
-      .expect(201);
+      .post('/api/auth/login')
+      .send({ email: 'bad-input' })
+      .expect(400);
 
-    expect(response.body.name).toBe('Pipeline 1');
-    expect(response.body.sourceConnectorId).toBe(connectorResponse.body.id);
+    expect(response.body.requestId).toBeDefined();
+    expect(response.body.path).toBe('/api/auth/login');
+    expect(response.body.statusCode).toBe(400);
+    expect(response.body.stack).toBeUndefined();
+    expect(response.body.trace).toBeUndefined();
   });
 
-  it("user cannot create pipeline using another user's connector", async () => {
-    const tokenOne = await registerAndGetToken(app, userOne);
-    const tokenTwo = await registerAndGetToken(app, userTwo);
+  it('GET /api/system/info returns safe runtime metadata', async () => {
+    const response = await request(app.getHttpServer()).get('/api/system/info').expect(200);
 
-    const connectorResponse = await request(app.getHttpServer())
-      .post('/api/connectors')
-      .set('Authorization', `Bearer ${tokenOne}`)
-      .send({
-        name: 'Private Connector',
-        type: 'DATABASE',
-        configJson: { host: 'db.local' },
-      })
+    expect(response.body.service).toBe('syncbridge-api');
+    expect(response.body.queueMode).toBeDefined();
+    expect(response.body.scheduler).toEqual(
+      expect.objectContaining({
+        enabled: expect.any(Boolean),
+        processRole: expect.any(String),
+      }),
+    );
+    const serialized = JSON.stringify(response.body).toLowerCase();
+    expect(serialized).not.toContain('jwt_access_secret');
+    expect(serialized).not.toContain('jwt_refresh_secret');
+    expect(serialized).not.toContain('replace_me_access_secret');
+    expect(serialized).not.toContain('replace_me_refresh_secret');
+  });
+
+  it('refresh token rotates and old refresh token is rejected', async () => {
+    const auth = await registerUser(app, userOne);
+
+    const refreshResponse = await request(app.getHttpServer())
+      .post('/api/auth/refresh')
+      .send({ refreshToken: auth.refreshToken })
+      .expect(201);
+
+    expect(refreshResponse.body.accessToken).toBeDefined();
+    expect(refreshResponse.body.refreshToken).toBeDefined();
+
+    await request(app.getHttpServer())
+      .post('/api/auth/refresh')
+      .send({ refreshToken: auth.refreshToken })
+      .expect(401);
+  });
+
+  it('logout revokes current refresh token', async () => {
+    const auth = await registerUser(app, userOne);
+
+    await request(app.getHttpServer())
+      .post('/api/auth/logout')
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .send({ refreshToken: auth.refreshToken })
       .expect(201);
 
     await request(app.getHttpServer())
-      .post('/api/pipelines')
-      .set('Authorization', `Bearer ${tokenTwo}`)
+      .post('/api/auth/refresh')
+      .send({ refreshToken: auth.refreshToken })
+      .expect(401);
+  });
+
+  it('rejects connector configJson with secret-like keys', async () => {
+    const auth = await registerUser(app, userOne);
+
+    const response = await request(app.getHttpServer())
+      .post('/api/connectors')
+      .set('Authorization', `Bearer ${auth.accessToken}`)
       .send({
-        name: 'Unauthorized Pipeline',
-        sourceConnectorId: connectorResponse.body.id,
-        targetName: 'forbidden_target',
-        mappingJson: { source: 'target' },
+        name: 'Unsafe Connector',
+        type: 'WEBHOOK',
+        configJson: { apiKey: 'do-not-store' },
+      })
+      .expect(400);
+
+    expect(response.body.message).toContain(
+      'Connector credentials must not be stored in configJson. Use a secret manager in production.',
+    );
+  });
+
+  it('connector status update works for owner', async () => {
+    const auth = await registerUser(app, userOne);
+    const connector = await createConnector(app, auth.accessToken, {
+      name: 'Status Connector',
+      type: 'WEBHOOK',
+      configJson: { endpoint: '/in' },
+    });
+
+    const response = await request(app.getHttpServer())
+      .patch(`/api/connectors/${connector.id}/status`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .send({ status: 'PAUSED' })
+      .expect(200);
+
+    expect(response.body.status).toBe('PAUSED');
+  });
+
+  it("user cannot update another user's connector status", async () => {
+    const authOne = await registerUser(app, userOne);
+    const authTwo = await registerUser(app, userTwo);
+
+    const connector = await createConnector(app, authOne.accessToken, {
+      name: 'Private Connector',
+      type: 'REST_API',
+      configJson: { baseUrl: 'https://api.local' },
+    });
+
+    await request(app.getHttpServer())
+      .patch(`/api/connectors/${connector.id}/status`)
+      .set('Authorization', `Bearer ${authTwo.accessToken}`)
+      .send({ status: 'ERROR' })
+      .expect(403);
+  });
+
+  it('pipeline status update works for owner', async () => {
+    const auth = await registerUser(app, userOne);
+    const connector = await createConnector(app, auth.accessToken, {
+      name: 'Source Connector',
+      type: 'DATABASE',
+      configJson: { host: 'db.local' },
+    });
+    const pipeline = await createPipeline(app, auth.accessToken, {
+      name: 'Pipeline One',
+      sourceConnectorId: connector.id,
+      targetName: 'contacts_target',
+      mappingJson: { email: 'contact.email' },
+    });
+
+    const response = await request(app.getHttpServer())
+      .patch(`/api/pipelines/${pipeline.id}/status`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .send({ status: 'ARCHIVED' })
+      .expect(200);
+
+    expect(response.body.status).toBe('ARCHIVED');
+  });
+
+  it('owner can configure and read pipeline schedule', async () => {
+    const auth = await registerUser(app, userOne);
+    const connector = await createConnector(app, auth.accessToken, {
+      name: 'Schedule Source',
+      type: 'DATABASE',
+      configJson: { host: 'db.local' },
+    });
+    const pipeline = await createPipeline(app, auth.accessToken, {
+      name: 'Schedule Pipeline',
+      sourceConnectorId: connector.id,
+      targetName: 'contacts_target',
+      mappingJson: { email: 'contact.email' },
+    });
+
+    const updateResponse = await request(app.getHttpServer())
+      .patch(`/api/pipelines/${pipeline.id}/schedule`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .send({
+        scheduleEnabled: true,
+        scheduleCron: '*/5 * * * *',
+        scheduleTimezone: 'UTC',
+        incrementalMode: true,
+      })
+      .expect(200);
+
+    expect(updateResponse.body.scheduleEnabled).toBe(true);
+    expect(updateResponse.body.scheduleCron).toBe('*/5 * * * *');
+    expect(updateResponse.body.scheduleTimezone).toBe('UTC');
+    expect(updateResponse.body.incrementalMode).toBe(true);
+    expect(updateResponse.body.nextRunAt).toBeDefined();
+
+    const getResponse = await request(app.getHttpServer())
+      .get(`/api/pipelines/${pipeline.id}/schedule`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .expect(200);
+
+    expect(getResponse.body.pipelineId).toBe(pipeline.id);
+    expect(getResponse.body.scheduleEnabled).toBe(true);
+  });
+
+  it('schedule enable requires valid cron expression', async () => {
+    const auth = await registerUser(app, userOne);
+    const connector = await createConnector(app, auth.accessToken, {
+      name: 'Schedule Validation Source',
+      type: 'DATABASE',
+      configJson: { host: 'db.local' },
+    });
+    const pipeline = await createPipeline(app, auth.accessToken, {
+      name: 'Schedule Validation Pipeline',
+      sourceConnectorId: connector.id,
+      targetName: 'contacts_target',
+      mappingJson: { email: 'contact.email' },
+    });
+
+    await request(app.getHttpServer())
+      .patch(`/api/pipelines/${pipeline.id}/schedule`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .send({ scheduleEnabled: true })
+      .expect(400);
+
+    await request(app.getHttpServer())
+      .patch(`/api/pipelines/${pipeline.id}/schedule`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .send({
+        scheduleEnabled: true,
+        scheduleCron: 'invalid cron',
+        scheduleTimezone: 'UTC',
+      })
+      .expect(400);
+  });
+
+  it("user cannot update another user's pipeline schedule", async () => {
+    const authOne = await registerUser(app, userOne);
+    const authTwo = await registerUser(app, userTwo);
+
+    const connector = await createConnector(app, authOne.accessToken, {
+      name: 'Owner Connector',
+      type: 'DATABASE',
+      configJson: { host: 'db.local' },
+    });
+    const pipeline = await createPipeline(app, authOne.accessToken, {
+      name: 'Owner Pipeline',
+      sourceConnectorId: connector.id,
+      targetName: 'owner_target',
+      mappingJson: { email: 'contact.email' },
+    });
+
+    await request(app.getHttpServer())
+      .patch(`/api/pipelines/${pipeline.id}/schedule`)
+      .set('Authorization', `Bearer ${authTwo.accessToken}`)
+      .send({
+        scheduleEnabled: true,
+        scheduleCron: '*/5 * * * *',
+        scheduleTimezone: 'UTC',
       })
       .expect(403);
   });
 
-  it('webhook event intake stores event', async () => {
-    const token = await registerAndGetToken(app, userOne);
-
-    const connectorResponse = await request(app.getHttpServer())
-      .post('/api/connectors')
-      .set('Authorization', `Bearer ${token}`)
-      .send({
-        name: 'Webhook Connector',
-        type: 'WEBHOOK',
-        configJson: { endpoint: '/incoming' },
-      })
-      .expect(201);
-
-    const response = await request(app.getHttpServer())
-      .post(`/api/webhooks/${connectorResponse.body.id}/events`)
-      .send({
-        eventType: 'customer.updated',
-        customerId: 'C-1001',
-      })
-      .expect(201);
-
-    expect(response.body.status).toBe('RECEIVED');
-
-    const storedEvent = await prisma.webhookEvent.findUnique({
-      where: { id: response.body.id as string },
+  it('archived and paused pipelines cannot be scheduled or triggered', async () => {
+    const auth = await registerUser(app, userOne);
+    const connector = await createConnector(app, auth.accessToken, {
+      name: 'Lifecycle Connector',
+      type: 'DATABASE',
+      configJson: { host: 'db.local' },
     });
-    expect(storedEvent).not.toBeNull();
-    expect(storedEvent?.eventType).toBe('customer.updated');
+    const archivedPipeline = await createPipeline(app, auth.accessToken, {
+      name: 'Archived Pipeline',
+      sourceConnectorId: connector.id,
+      targetName: 'archived_target',
+      mappingJson: { email: 'contact.email' },
+    });
+
+    await request(app.getHttpServer())
+      .patch(`/api/pipelines/${archivedPipeline.id}/status`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .send({ status: 'ARCHIVED' })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .patch(`/api/pipelines/${archivedPipeline.id}/schedule`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .send({
+        scheduleEnabled: true,
+        scheduleCron: '*/5 * * * *',
+        scheduleTimezone: 'UTC',
+      })
+      .expect(400);
+
+    const pausedPipeline = await createPipeline(app, auth.accessToken, {
+      name: 'Paused Pipeline',
+      sourceConnectorId: connector.id,
+      targetName: 'paused_target',
+      mappingJson: { email: 'contact.email' },
+    });
+
+    await request(app.getHttpServer())
+      .patch(`/api/pipelines/${pausedPipeline.id}/status`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .send({ status: 'PAUSED' })
+      .expect(200);
+
+    await request(app.getHttpServer())
+      .post(`/api/pipelines/${pausedPipeline.id}/schedule/trigger`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .expect(400);
   });
 
-  it('sync run can be created for own pipeline', async () => {
-    const token = await registerAndGetToken(app, userOne);
+  it('schedule trigger creates scheduled sync run in sync mode', async () => {
+    const auth = await registerUser(app, userOne);
+    const connector = await createConnector(app, auth.accessToken, {
+      name: 'Trigger Connector',
+      type: 'JSON_UPLOAD',
+      configJson: { mode: 'test' },
+    });
+    const pipeline = await createPipeline(app, auth.accessToken, {
+      name: 'Trigger Pipeline',
+      sourceConnectorId: connector.id,
+      targetName: 'contacts',
+      mappingJson: {
+        fields: {
+          email: { path: 'email', required: true, type: 'string', lowercase: true, trim: true },
+        },
+      },
+    });
 
-    const connectorResponse = await request(app.getHttpServer())
-      .post('/api/connectors')
-      .set('Authorization', `Bearer ${token}`)
-      .send({
-        name: 'Run Connector',
-        type: 'JSON_UPLOAD',
-        configJson: { mode: 'test' },
-      })
+    const triggerResponse = await request(app.getHttpServer())
+      .post(`/api/pipelines/${pipeline.id}/schedule/trigger`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
       .expect(201);
 
-    const pipelineResponse = await request(app.getHttpServer())
+    expect(triggerResponse.body.triggerType).toBe('SCHEDULED');
+  });
+
+  it('scheduler status endpoint is available to authenticated users', async () => {
+    const auth = await registerUser(app, userOne);
+
+    const response = await request(app.getHttpServer())
+      .get('/api/scheduler/status')
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .expect(200);
+
+    expect(response.body).toEqual(
+      expect.objectContaining({
+        schedulerEnabled: expect.any(Boolean),
+        processRole: expect.any(String),
+        pollIntervalSeconds: expect.any(Number),
+        lockTtlSeconds: expect.any(Number),
+      }),
+    );
+  });
+
+  it("user cannot create pipeline with another user's connector", async () => {
+    const authOne = await registerUser(app, userOne);
+    const authTwo = await registerUser(app, userTwo);
+
+    const connector = await createConnector(app, authOne.accessToken, {
+      name: 'Private Source',
+      type: 'DATABASE',
+      configJson: { host: 'db.local' },
+    });
+
+    await request(app.getHttpServer())
       .post('/api/pipelines')
-      .set('Authorization', `Bearer ${token}`)
+      .set('Authorization', `Bearer ${authTwo.accessToken}`)
       .send({
-        name: 'Run Pipeline',
-        sourceConnectorId: connectorResponse.body.id,
-        targetName: 'sync_target',
-        mappingJson: { in: 'out' },
+        name: 'Forbidden Pipeline',
+        sourceConnectorId: connector.id,
+        targetName: 'forbidden_target',
+        mappingJson: { inputEmail: 'contact.email' },
       })
-      .expect(201);
+      .expect(403);
+  });
+
+  it('pipeline create rejects dangerous mapping path', async () => {
+    const auth = await registerUser(app, userOne);
+    const connector = await createConnector(app, auth.accessToken, {
+      name: 'Safe Connector',
+      type: 'DATABASE',
+      configJson: { host: 'db.local' },
+    });
+
+    await request(app.getHttpServer())
+      .post('/api/pipelines')
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .send({
+        name: 'Unsafe Mapping Pipeline',
+        sourceConnectorId: connector.id,
+        targetName: 'unsafe_target',
+        mappingJson: {
+          fields: {
+            email: {
+              path: '__proto__.polluted',
+              type: 'string',
+            },
+          },
+        },
+      })
+      .expect(400);
+  });
+
+  it('running pipeline with mockRecords creates synced records and summary counts', async () => {
+    const auth = await registerUser(app, userOne);
+    const connector = await createConnector(app, auth.accessToken, {
+      name: 'Run Source',
+      type: 'JSON_UPLOAD',
+      configJson: { mode: 'test' },
+    });
+    const pipeline = await createPipeline(app, auth.accessToken, {
+      name: 'Run Pipeline',
+      sourceConnectorId: connector.id,
+      targetName: 'contacts',
+      mappingJson: {
+        fields: {
+          email: { path: 'email', required: true, type: 'string', trim: true, lowercase: true },
+          fullName: { path: 'name', default: 'Unknown', type: 'string', trim: true },
+        },
+      },
+    });
 
     const runResponse = await request(app.getHttpServer())
-      .post(`/api/pipelines/${pipelineResponse.body.id}/runs`)
-      .set('Authorization', `Bearer ${token}`)
+      .post(`/api/pipelines/${pipeline.id}/runs`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
       .send({
-        sampleRecords: [
+        mockRecords: [
           {
-            externalId: 'rec-1',
-            sourceType: 'WEBHOOK',
-            rawJson: { a: 1 },
-            normalizedJson: { a: 1 },
+            externalId: '1',
+            raw: {
+              email: 'test@example.com',
+              name: 'Test User',
+            },
           },
         ],
       })
       .expect(201);
 
-    expect(runResponse.body.status).toBe('SUCCESS');
-    expect(runResponse.body.recordsProcessed).toBeGreaterThanOrEqual(1);
+    expect(runResponse.body.summary.recordsReceived).toBe(1);
+    expect(runResponse.body.summary.recordsProcessed).toBe(1);
+    expect(runResponse.body.summary.recordsFailed).toBe(0);
+    expect(runResponse.body.triggerType).toBe('MANUAL');
+
+    const records = await prisma.syncedRecord.findMany({ where: { syncRunId: runResponse.body.id as string } });
+    expect(records).toHaveLength(1);
+    expect((records[0].normalizedJson as { email?: string }).email).toBe('test@example.com');
+    expect((records[0].normalizedJson as { fullName?: string }).fullName).toBe('Test User');
   });
 
-  it('admin can see all connectors and pipelines', async () => {
-    const tokenOne = await registerAndGetToken(app, userOne);
-    const tokenTwo = await registerAndGetToken(app, userTwo);
-    await registerAndGetToken(app, {
+  it('failed transformed record increments recordsFailed', async () => {
+    const auth = await registerUser(app, userOne);
+    const connector = await createConnector(app, auth.accessToken, {
+      name: 'Failure Source',
+      type: 'JSON_UPLOAD',
+      configJson: { mode: 'test' },
+    });
+    const pipeline = await createPipeline(app, auth.accessToken, {
+      name: 'Failure Pipeline',
+      sourceConnectorId: connector.id,
+      targetName: 'contacts',
+      mappingJson: {
+        fields: {
+          email: { path: 'email', required: true, type: 'string' },
+        },
+      },
+    });
+
+    const runResponse = await request(app.getHttpServer())
+      .post(`/api/pipelines/${pipeline.id}/runs`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .send({
+        mockRecords: [
+          {
+            externalId: 'missing-email',
+            raw: {},
+          },
+        ],
+      })
+      .expect(201);
+
+    expect(runResponse.body.summary.recordsReceived).toBe(1);
+    expect(runResponse.body.summary.recordsProcessed).toBe(0);
+    expect(runResponse.body.summary.recordsFailed).toBe(1);
+    expect(runResponse.body.status).toBe('FAILED');
+  });
+
+  it('preview transforms records without creating sync run', async () => {
+    const auth = await registerUser(app, userOne);
+    const connector = await createConnector(app, auth.accessToken, {
+      name: 'Preview Source',
+      type: 'WEBHOOK',
+      configJson: { endpoint: '/preview' },
+    });
+    const pipeline = await createPipeline(app, auth.accessToken, {
+      name: 'Preview Pipeline',
+      sourceConnectorId: connector.id,
+      targetName: 'contacts',
+      mappingJson: {
+        fields: {
+          email: { path: 'contact.email', required: true, type: 'string', trim: true, lowercase: true },
+          isActive: { path: 'active', type: 'boolean', default: true },
+        },
+      },
+    });
+
+    const previewResponse = await request(app.getHttpServer())
+      .post(`/api/pipelines/${pipeline.id}/preview`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .send({
+        records: [
+          {
+            externalId: '1',
+            raw: {
+              contact: { email: ' USER@EXAMPLE.COM ' },
+              active: 'true',
+            },
+          },
+        ],
+      })
+      .expect(201);
+
+    expect(previewResponse.body.summary.recordsReceived).toBe(1);
+    expect(previewResponse.body.summary.recordsValid).toBe(1);
+    expect(previewResponse.body.summary.recordsInvalid).toBe(0);
+    expect(previewResponse.body.results[0].normalized.email).toBe('user@example.com');
+    expect(previewResponse.body.results[0].normalized.isActive).toBe(true);
+
+    const runs = await request(app.getHttpServer())
+      .get(`/api/pipelines/${pipeline.id}/runs`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .expect(200);
+
+    expect(runs.body).toHaveLength(0);
+  });
+
+  it("user cannot preview another user's pipeline", async () => {
+    const authOne = await registerUser(app, userOne);
+    const authTwo = await registerUser(app, userTwo);
+
+    const connector = await createConnector(app, authOne.accessToken, {
+      name: 'Private Preview Connector',
+      type: 'WEBHOOK',
+      configJson: { endpoint: '/private-preview' },
+    });
+    const pipeline = await createPipeline(app, authOne.accessToken, {
+      name: 'Private Preview Pipeline',
+      sourceConnectorId: connector.id,
+      targetName: 'contacts',
+      mappingJson: {
+        fields: {
+          email: { path: 'contact.email', required: true, type: 'string' },
+        },
+      },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/api/pipelines/${pipeline.id}/preview`)
+      .set('Authorization', `Bearer ${authTwo.accessToken}`)
+      .send({
+        records: [
+          {
+            externalId: '1',
+            raw: { contact: { email: 'other@example.com' } },
+          },
+        ],
+      })
+      .expect(403);
+  });
+
+  it('mapping validation rejects dangerous paths', async () => {
+    const auth = await registerUser(app, userOne);
+
+    const response = await request(app.getHttpServer())
+      .post('/api/pipelines/validate-mapping')
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .send({
+        mappingJson: {
+          fields: {
+            email: {
+              path: '__proto__.polluted',
+              type: 'string',
+            },
+          },
+        },
+      })
+      .expect(201);
+
+    expect(response.body.valid).toBe(false);
+    expect(response.body.errors.join(' ')).toContain('unsafe segment');
+  });
+
+  it('global sync runs listing respects ownership', async () => {
+    const authOne = await registerUser(app, userOne);
+    const authTwo = await registerUser(app, userTwo);
+
+    const connectorOne = await createConnector(app, authOne.accessToken, {
+      name: 'C1',
+      type: 'WEBHOOK',
+      configJson: { endpoint: '/c1' },
+    });
+    const pipelineOne = await createPipeline(app, authOne.accessToken, {
+      name: 'P1',
+      sourceConnectorId: connectorOne.id,
+      targetName: 't1',
+      mappingJson: { email: 'contact.email' },
+    });
+
+    const connectorTwo = await createConnector(app, authTwo.accessToken, {
+      name: 'C2',
+      type: 'WEBHOOK',
+      configJson: { endpoint: '/c2' },
+    });
+    const pipelineTwo = await createPipeline(app, authTwo.accessToken, {
+      name: 'P2',
+      sourceConnectorId: connectorTwo.id,
+      targetName: 't2',
+      mappingJson: { email: 'contact.email' },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/api/pipelines/${pipelineOne.id}/runs`)
+      .set('Authorization', `Bearer ${authOne.accessToken}`)
+      .send({ mockRecords: [{ externalId: 'u1', raw: { email: 'u1@example.com' } }] })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/pipelines/${pipelineTwo.id}/runs`)
+      .set('Authorization', `Bearer ${authTwo.accessToken}`)
+      .send({ mockRecords: [{ externalId: 'u2', raw: { email: 'u2@example.com' } }] })
+      .expect(201);
+
+    const userOneRuns = await request(app.getHttpServer())
+      .get('/api/sync-runs?page=1&limit=20')
+      .set('Authorization', `Bearer ${authOne.accessToken}`)
+      .expect(200);
+
+    expect(userOneRuns.body.items).toHaveLength(1);
+    expect(userOneRuns.body.items[0].pipeline.ownerId).toBe(authOne.userId);
+
+    const operatorAuth = await createPrivilegedUser(app, prisma, {
+      email: 'operator@example.com',
+      password: 'strongPassword123',
+      fullName: 'Operator User',
+      role: UserRole.OPERATOR,
+    });
+
+    const operatorRuns = await request(app.getHttpServer())
+      .get('/api/sync-runs?page=1&limit=20')
+      .set('Authorization', `Bearer ${operatorAuth.accessToken}`)
+      .expect(200);
+
+    expect(operatorRuns.body.items.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('webhook intake stores event, redacts sensitive headers, and marks no-pipeline events as ignored in sync mode', async () => {
+    const auth = await registerUser(app, userOne);
+    const connector = await createConnector(app, auth.accessToken, {
+      name: 'Webhook Connector',
+      type: 'WEBHOOK',
+      configJson: { endpoint: '/incoming' },
+    });
+
+    const response = await request(app.getHttpServer())
+      .post(`/api/webhooks/${connector.id}/events`)
+      .set('Authorization', 'Bearer should-not-be-stored')
+      .set('X-API-Key', 'secret-key-value')
+      .send({ eventType: 'customer.updated', customerId: 'C-1001' })
+      .expect(201);
+
+    expect(response.body.status).toBe('IGNORED');
+
+    const stored = await prisma.webhookEvent.findUnique({ where: { id: response.body.id as string } });
+    expect(stored).not.toBeNull();
+    expect((stored?.headersJson as { authorization?: string }).authorization).toBe('REDACTED');
+    expect((stored?.headersJson as { 'x-api-key'?: string })['x-api-key']).toBe('REDACTED');
+    expect(stored?.status).toBe('IGNORED');
+  });
+
+  it('sync mode processes webhook immediately and creates sync run + synced record', async () => {
+    const auth = await registerUser(app, userOne);
+    const connector = await createConnector(app, auth.accessToken, {
+      name: 'Webhook Source',
+      type: 'WEBHOOK',
+      configJson: { endpoint: '/sync-process' },
+    });
+    const pipeline = await createPipeline(app, auth.accessToken, {
+      name: 'Webhook Pipeline',
+      sourceConnectorId: connector.id,
+      targetName: 'contacts',
+      mappingJson: {
+        fields: {
+          email: { path: 'contact.email', type: 'string', required: true, lowercase: true, trim: true },
+          amount: { path: 'invoice.total', type: 'number' },
+        },
+      },
+    });
+
+    const intake = await request(app.getHttpServer())
+      .post(`/api/webhooks/${connector.id}/events`)
+      .set('X-SyncBridge-Event-ID', 'evt-sync-1')
+      .send({
+        eventType: 'invoice.updated',
+        contact: { email: ' USER@EXAMPLE.COM ' },
+        invoice: { total: '42.50' },
+      })
+      .expect(201);
+
+    expect(intake.body.status).toBe('PROCESSED');
+
+    const runs = await request(app.getHttpServer())
+      .get(`/api/pipelines/${pipeline.id}/runs`)
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .expect(200);
+
+    expect(runs.body).toHaveLength(1);
+    expect(runs.body[0].status).toBe('SUCCESS');
+    expect(runs.body[0].triggerType).toBe('WEBHOOK');
+    expect(runs.body[0].recordsProcessed).toBe(1);
+    expect(runs.body[0].recordsFailed).toBe(0);
+
+    const records = await prisma.syncedRecord.findMany({
+      where: { syncRunId: runs.body[0].id as string },
+    });
+    expect(records).toHaveLength(1);
+    expect((records[0].normalizedJson as { email?: string }).email).toBe('user@example.com');
+    expect((records[0].normalizedJson as { amount?: number }).amount).toBe(42.5);
+  });
+
+  it('duplicate X-SyncBridge-Event-ID is handled idempotently', async () => {
+    const auth = await registerUser(app, userOne);
+    const connector = await createConnector(app, auth.accessToken, {
+      name: 'Webhook Connector',
+      type: 'WEBHOOK',
+      configJson: { endpoint: '/incoming' },
+    });
+
+    const first = await request(app.getHttpServer())
+      .post(`/api/webhooks/${connector.id}/events`)
+      .set('X-SyncBridge-Event-ID', 'evt-123')
+      .send({ eventType: 'order.created', orderId: 'A-1001' })
+      .expect(201);
+
+    const second = await request(app.getHttpServer())
+      .post(`/api/webhooks/${connector.id}/events`)
+      .set('X-SyncBridge-Event-ID', 'evt-123')
+      .send({ eventType: 'order.created', orderId: 'A-1001' })
+      .expect(201);
+
+    expect(second.body.duplicate).toBe(true);
+    expect(second.body.id).toBe(first.body.id);
+
+    const list = await request(app.getHttpServer())
+      .get('/api/webhooks/events?page=1&limit=20')
+      .set('Authorization', `Bearer ${auth.accessToken}`)
+      .expect(200);
+
+    expect(list.body.items).toHaveLength(1);
+  });
+
+  it('retry webhook endpoint is owner-scoped and supports failed events', async () => {
+    const authOne = await registerUser(app, userOne);
+    const authTwo = await registerUser(app, userTwo);
+
+    const connector = await createConnector(app, authOne.accessToken, {
+      name: 'Retry Connector',
+      type: 'WEBHOOK',
+      configJson: { endpoint: '/retry' },
+    });
+
+    const intake = await request(app.getHttpServer())
+      .post(`/api/webhooks/${connector.id}/events`)
+      .send({ eventType: 'retry.test' })
+      .expect(201);
+
+    await prisma.webhookEvent.update({
+      where: { id: intake.body.id as string },
+      data: {
+        status: WebhookEventStatus.FAILED,
+        errorMessage: 'forced for test',
+      },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/api/webhooks/events/${intake.body.id as string}/retry`)
+      .set('Authorization', `Bearer ${authTwo.accessToken}`)
+      .expect(403);
+
+    const ownerRetry = await request(app.getHttpServer())
+      .post(`/api/webhooks/events/${intake.body.id as string}/retry`)
+      .set('Authorization', `Bearer ${authOne.accessToken}`)
+      .expect(201);
+
+    expect(ownerRetry.body.status).toBe('IGNORED');
+
+    const stored = await prisma.webhookEvent.findUnique({
+      where: { id: intake.body.id as string },
+    });
+    expect(stored?.status).toBe('IGNORED');
+  });
+
+  it('user sees only own webhook events while privileged users see all', async () => {
+    const authOne = await registerUser(app, userOne);
+    const authTwo = await registerUser(app, userTwo);
+
+    const connectorOne = await createConnector(app, authOne.accessToken, {
+      name: 'Webhook One',
+      type: 'WEBHOOK',
+      configJson: { endpoint: '/one' },
+    });
+
+    const connectorTwo = await createConnector(app, authTwo.accessToken, {
+      name: 'Webhook Two',
+      type: 'WEBHOOK',
+      configJson: { endpoint: '/two' },
+    });
+
+    await request(app.getHttpServer())
+      .post(`/api/webhooks/${connectorOne.id}/events`)
+      .send({ eventType: 'one.event' })
+      .expect(201);
+
+    await request(app.getHttpServer())
+      .post(`/api/webhooks/${connectorTwo.id}/events`)
+      .send({ eventType: 'two.event' })
+      .expect(201);
+
+    const userOneList = await request(app.getHttpServer())
+      .get('/api/webhooks/events?page=1&limit=20')
+      .set('Authorization', `Bearer ${authOne.accessToken}`)
+      .expect(200);
+
+    expect(userOneList.body.items).toHaveLength(1);
+    expect(userOneList.body.items[0].connector.name).toBe('Webhook One');
+
+    const adminAuth = await createPrivilegedUser(app, prisma, {
       email: 'admin@example.com',
       password: 'strongPassword123',
       fullName: 'Admin User',
+      role: UserRole.ADMIN,
     });
 
-    const admin = await prisma.user.findUnique({ where: { email: 'admin@example.com' } });
-    if (!admin) {
-      throw new Error('Admin user not found in test setup');
-    }
-    await prisma.user.update({
-      where: { id: admin.id },
-      data: { role: UserRole.ADMIN },
+    const adminList = await request(app.getHttpServer())
+      .get('/api/webhooks/events?page=1&limit=20')
+      .set('Authorization', `Bearer ${adminAuth.accessToken}`)
+      .expect(200);
+
+    expect(adminList.body.items.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('dashboard summary respects ownership and privileged access', async () => {
+    const authOne = await registerUser(app, userOne);
+    const authTwo = await registerUser(app, userTwo);
+
+    const connectorOne = await createConnector(app, authOne.accessToken, {
+      name: 'Dash Connector 1',
+      type: 'WEBHOOK',
+      configJson: { endpoint: '/dash1' },
     });
 
-    const adminLogin = await request(app.getHttpServer())
-      .post('/api/auth/login')
-      .send({ email: 'admin@example.com', password: 'strongPassword123' })
-      .expect(201);
-    const adminToken = adminLogin.body.accessToken as string;
+    const connectorTwo = await createConnector(app, authTwo.accessToken, {
+      name: 'Dash Connector 2',
+      type: 'WEBHOOK',
+      configJson: { endpoint: '/dash2' },
+    });
+
+    const pipelineOne = await createPipeline(app, authOne.accessToken, {
+      name: 'Dash Pipeline 1',
+      sourceConnectorId: connectorOne.id,
+      targetName: 'target1',
+      mappingJson: { email: 'contact.email' },
+    });
 
     await request(app.getHttpServer())
-      .post('/api/connectors')
-      .set('Authorization', `Bearer ${tokenOne}`)
-      .send({
-        name: 'U1 Connector',
-        type: 'WEBHOOK',
-        configJson: { owner: 'u1' },
-      })
-      .expect(201);
-
-    const userTwoConnector = await request(app.getHttpServer())
-      .post('/api/connectors')
-      .set('Authorization', `Bearer ${tokenTwo}`)
-      .send({
-        name: 'U2 Connector',
-        type: 'REST_API',
-        configJson: { owner: 'u2' },
-      })
+      .post(`/api/pipelines/${pipelineOne.id}/runs`)
+      .set('Authorization', `Bearer ${authOne.accessToken}`)
+      .send({ mockRecords: [{ externalId: '1', raw: { email: 'u1@example.com' } }] })
       .expect(201);
 
     await request(app.getHttpServer())
-      .post('/api/pipelines')
-      .set('Authorization', `Bearer ${tokenTwo}`)
-      .send({
-        name: 'U2 Pipeline',
-        sourceConnectorId: userTwoConnector.body.id,
-        targetName: 'u2_target',
-        mappingJson: { input: 'output' },
-      })
+      .post(`/api/webhooks/${connectorOne.id}/events`)
+      .send({ eventType: 'u1.event' })
       .expect(201);
 
-    const connectorsList = await request(app.getHttpServer())
-      .get('/api/connectors')
-      .set('Authorization', `Bearer ${adminToken}`)
+    await request(app.getHttpServer())
+      .post(`/api/webhooks/${connectorTwo.id}/events`)
+      .send({ eventType: 'u2.event' })
+      .expect(201);
+
+    const userOneSummary = await request(app.getHttpServer())
+      .get('/api/dashboard/summary')
+      .set('Authorization', `Bearer ${authOne.accessToken}`)
       .expect(200);
 
-    expect(connectorsList.body.length).toBeGreaterThanOrEqual(2);
+    expect(userOneSummary.body.connectorsCount).toBe(1);
+    expect(userOneSummary.body.pipelinesCount).toBe(1);
+    expect(userOneSummary.body.syncRunsCount).toBe(2);
+    expect(userOneSummary.body.webhookEventsCount).toBe(1);
 
-    const pipelinesList = await request(app.getHttpServer())
-      .get('/api/pipelines')
-      .set('Authorization', `Bearer ${adminToken}`)
+    const operatorAuth = await createPrivilegedUser(app, prisma, {
+      email: 'ops@example.com',
+      password: 'strongPassword123',
+      fullName: 'Ops User',
+      role: UserRole.OPERATOR,
+    });
+
+    const operatorSummary = await request(app.getHttpServer())
+      .get('/api/dashboard/summary')
+      .set('Authorization', `Bearer ${operatorAuth.accessToken}`)
       .expect(200);
 
-    expect(pipelinesList.body.length).toBeGreaterThanOrEqual(1);
+    expect(operatorSummary.body.connectorsCount).toBeGreaterThanOrEqual(2);
+  });
+
+  it('audit metadata includes requestId for emitted events', async () => {
+    const auth = await registerUser(app, userOne);
+    const connector = await createConnector(app, auth.accessToken, {
+      name: 'Audit Connector',
+      type: 'WEBHOOK',
+      configJson: { endpoint: '/audit' },
+    });
+
+    const auditEntries = await prisma.auditLog.findMany({
+      where: {
+        action: 'connector_created',
+        entityType: 'connector',
+        entityId: connector.id,
+      },
+      take: 1,
+    });
+
+    expect(auditEntries.length).toBe(1);
+    const metadata = auditEntries[0].metadataJson as Record<string, unknown>;
+    expect(typeof metadata.requestId).toBe('string');
+    expect((metadata.requestId as string).length).toBeGreaterThan(0);
   });
 });
 
-async function registerAndGetToken(
+type AuthPayload = {
+  accessToken: string;
+  refreshToken: string;
+  user: {
+    id: string;
+    email: string;
+    role: UserRole;
+  };
+};
+
+async function registerUser(
   app: INestApplication,
   payload: { email: string; password: string; fullName: string },
-) {
+): Promise<AuthPayload & { userId: string }> {
   const response = await request(app.getHttpServer()).post('/api/auth/register').send(payload).expect(201);
+  return {
+    ...(response.body as AuthPayload),
+    userId: response.body.user.id as string,
+  };
+}
 
-  return response.body.accessToken as string;
+async function loginUser(app: INestApplication, email: string, password: string): Promise<AuthPayload> {
+  const response = await request(app.getHttpServer())
+    .post('/api/auth/login')
+    .send({ email, password })
+    .expect(201);
+  return response.body as AuthPayload;
+}
+
+async function createPrivilegedUser(
+  app: INestApplication,
+  prisma: InMemoryPrismaService,
+  payload: { email: string; password: string; fullName: string; role: UserRole },
+): Promise<AuthPayload> {
+  const auth = await registerUser(app, {
+    email: payload.email,
+    password: payload.password,
+    fullName: payload.fullName,
+  });
+  await prisma.user.update({
+    where: { id: auth.userId },
+    data: { role: payload.role },
+  });
+  return loginUser(app, payload.email, payload.password);
+}
+
+async function createConnector(
+  app: INestApplication,
+  token: string,
+  payload: {
+    name: string;
+    type: 'REST_API' | 'WEBHOOK' | 'CSV_UPLOAD' | 'JSON_UPLOAD' | 'DATABASE' | 'GOOGLE_SHEETS' | 'ONE_C_EXPORT' | 'MANUAL';
+    configJson: Record<string, unknown>;
+  },
+) {
+  const response = await request(app.getHttpServer())
+    .post('/api/connectors')
+    .set('Authorization', `Bearer ${token}`)
+    .send(payload)
+    .expect(201);
+
+  return response.body as { id: string; name: string; ownerId: string; status: string };
+}
+
+async function createPipeline(
+  app: INestApplication,
+  token: string,
+  payload: {
+    name: string;
+    sourceConnectorId: string;
+    targetName: string;
+    mappingJson: Record<string, unknown>;
+  },
+) {
+  const response = await request(app.getHttpServer())
+    .post('/api/pipelines')
+    .set('Authorization', `Bearer ${token}`)
+    .send(payload)
+    .expect(201);
+
+  return response.body as { id: string; name: string; sourceConnectorId: string; ownerId: string };
 }

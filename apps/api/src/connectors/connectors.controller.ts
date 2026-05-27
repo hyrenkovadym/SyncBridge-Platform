@@ -9,6 +9,7 @@ import { AuthenticatedUser } from '../auth/interfaces/authenticated-user.interfa
 import { JwtAuthGuard } from '../auth/guards/jwt-auth.guard';
 import { ConnectorsService } from './connectors.service';
 import { CreateConnectorDto } from './dto/create-connector.dto';
+import { UpdateConnectorStatusDto } from './dto/update-connector-status.dto';
 import { UpdateConnectorDto } from './dto/update-connector.dto';
 
 @ApiTags('connectors')
@@ -48,5 +49,16 @@ export class ConnectorsController {
     @CurrentUser() user: AuthenticatedUser,
   ) {
     return this.connectorsService.update(id, dto, user);
+  }
+
+  @Patch(':id/status')
+  @Roles(UserRole.USER, UserRole.OPERATOR, UserRole.ADMIN)
+  @ApiOperation({ summary: 'Update connector status' })
+  updateStatus(
+    @Param('id') id: string,
+    @Body() dto: UpdateConnectorStatusDto,
+    @CurrentUser() user: AuthenticatedUser,
+  ) {
+    return this.connectorsService.updateStatus(id, dto.status, user);
   }
 }

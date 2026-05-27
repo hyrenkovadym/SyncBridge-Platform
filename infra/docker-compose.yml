@@ -35,11 +35,43 @@ services:
       PORT: 4100
       DATABASE_URL: postgresql://syncbridge:syncbridge@postgres:5432/syncbridge?schema=public
       REDIS_URL: redis://redis:6379
+      QUEUE_MODE: async
+      BULLMQ_REDIS_URL: redis://redis:6379
+      BULLMQ_DEFAULT_ATTEMPTS: 3
+      BULLMQ_BACKOFF_MS: 5000
+      SCHEDULER_ENABLED: false
+      SCHEDULER_POLL_INTERVAL_SECONDS: 30
+      SCHEDULER_LOCK_TTL_SECONDS: 60
       JWT_ACCESS_SECRET: replace_me_access_secret
       JWT_REFRESH_SECRET: replace_me_refresh_secret
       CORS_ORIGIN: http://localhost:3001
     ports:
       - '4100:4100'
+
+  worker:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    container_name: syncbridge-worker
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      NODE_ENV: development
+      DATABASE_URL: postgresql://syncbridge:syncbridge@postgres:5432/syncbridge?schema=public
+      REDIS_URL: redis://redis:6379
+      QUEUE_MODE: async
+      BULLMQ_REDIS_URL: redis://redis:6379
+      BULLMQ_DEFAULT_ATTEMPTS: 3
+      BULLMQ_BACKOFF_MS: 5000
+      SCHEDULER_ENABLED: true
+      SCHEDULER_POLL_INTERVAL_SECONDS: 30
+      SCHEDULER_LOCK_TTL_SECONDS: 60
+      JWT_ACCESS_SECRET: replace_me_access_secret
+      JWT_REFRESH_SECRET: replace_me_refresh_secret
+      CORS_ORIGIN: http://localhost:3001
+    command: ["sh", "-c", "npx prisma db push --schema=apps/api/prisma/schema.prisma && npm run worker -w @syncbridge/api"]
 
   web:
     build:

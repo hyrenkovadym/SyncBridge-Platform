@@ -1,96 +1,59 @@
-# SyncBridge Platform Architecture (Phase 1)
+# Architecture (v1.0.0)
 
-## Monorepo Structure
-SyncBridge uses an npm workspace monorepo:
+## Monorepo Layout
 
-- `apps/api` - NestJS backend service
-- `apps/web` - Next.js frontend skeleton
-- `infra` - Docker Compose for local infrastructure
-- `docs` - architecture, roadmap, and security documentation
+- `apps/api`: NestJS API + worker runtime
+- `apps/web`: Next.js dashboard
+- `infra`: Docker Compose runtime
+- `docs`: product, security, and operations documentation
 
-## API Service (`apps/api`)
-The API is modular and backend-heavy by design:
+## Runtime Components
 
-- `auth` - registration, login, current user endpoint, JWT foundation
-- `users` - user persistence helpers
-- `connectors` - data source definitions and ownership access rules
-- `pipelines` - sync pipeline definitions linked to connectors
-- `webhooks` - public webhook intake storing raw events
-- `sync-runs` - synchronous simulated run creation (Phase 1 only)
-- `audit` - centralized audit log writes
-- `health` - health and readiness endpoints
-- `prisma` - Prisma client/provider
+- API process (`apps/api/src/main.ts`)
+- Worker process (`apps/api/src/worker.ts`)
+- PostgreSQL for core state and audit history
+- Redis for BullMQ queue backend
 
-Global API details:
-- Base URL prefix: `/api`
-- Swagger docs: `/api/docs`
-- ValidationPipe enabled globally
+## Domain Modules
 
-## Data Layer (PostgreSQL + Prisma)
-Phase 1 models:
+- `auth`: JWT access/refresh and RBAC guards
+- `connectors`: source system metadata and config policy
+- `pipelines`: mapping config, status, schedule controls
+- `transformations`: deterministic mapping/coercion engine
+- `sync-runs`: run lifecycle and record counters
+- `webhooks`: intake, redaction, idempotency, processing controls
+- `jobs`: queue orchestration and job status APIs
+- `scheduler`: due pipeline polling and schedule trigger flow
+- `dashboard`: summary endpoints for frontend
+- `audit`: event trail for domain actions
 
-- `User`
-- `RefreshToken`
-- `Connector`
-- `SyncPipeline`
-- `SyncRun`
-- `WebhookEvent`
-- `SyncedRecord`
-- `AuditLog`
+## Queue Architecture
 
-This schema supports ownership checks, auditability, and lifecycle statuses for connectors, pipelines, runs, and webhook events.
+`QUEUE_MODE=sync|async`
 
-## Redis Readiness
-Redis is part of local infrastructure and environment config (`REDIS_URL`) but is not deeply integrated in Phase 1 yet.  
-It is reserved for Phase 4+ workloads (queues, retries, background orchestration).
+- `sync-runs` queue, job: `execute-sync-run`
+- `webhooks` queue, job: `process-webhook-event`
 
-## Auth and RBAC
-Authentication:
-- `POST /api/auth/register`
-- `POST /api/auth/login`
-- `GET /api/auth/me`
+Background processing state is persisted in `BackgroundJob`.
 
-RBAC:
-- Roles: `USER`, `OPERATOR`, `ADMIN`
-- `Roles` decorator + `RolesGuard`
-- Ownership-aware service checks for connectors and pipelines
+## Scheduler Model
 
-## Connectors and Pipelines Foundations
-Connectors define source systems and configuration metadata (`configJson`).  
-Pipelines define source-to-target sync intent (`mappingJson`, `targetName`, status).
+- Scheduler polling runs in worker role when `SCHEDULER_ENABLED=true`.
+- Due pipelines are selected by `scheduleEnabled=true`, status `ACTIVE`, and `nextRunAt <= now`.
+- Polling avoids duplicate enqueue for active queued/running runs.
 
-Rules:
-- `USER` sees own connectors/pipelines
-- `OPERATOR`/`ADMIN` can see all
-- updates are owner-or-privileged
-- `USER` pipeline creation is limited to own connectors
+## Incremental Sync Foundation
 
-## Webhook Intake (Phase 1)
-`POST /api/webhooks/:connectorId/events` accepts arbitrary JSON payloads and stores:
-- payload JSON
-- headers JSON
-- event type
-- status (`RECEIVED`)
+- `SyncPipeline.incrementalMode`
+- `SyncPipeline.cursorJson`
+- Run payload `ignoreCursor` for manual overrides
+- Trigger type tracked on runs: `MANUAL`, `WEBHOOK`, `SCHEDULED`
 
-No processing pipeline runs yet; processing/retry logic is future phase work.
+## Security and Observability Baseline
 
-## Sync Runs (Phase 1)
-Endpoints:
-- `POST /api/pipelines/:id/runs`
-- `GET /api/pipelines/:id/runs`
-- `GET /api/sync-runs/:id`
-
-Current behavior:
-- creates a synchronous simulated run
-- marks run `SUCCESS`
-- optionally stores sample `SyncedRecord` rows
-- no queue/worker/scheduler integration yet
-
-## Future Architecture Direction
-Planned evolution:
-- background workers (BullMQ/Redis)
-- retry and dead-letter strategies
-- incremental sync scheduler
-- transformation and mapping engine
-- connector-specific adapters (REST/Google/1C/etc.)
-- observability and security hardening
+- Request ID middleware and context propagation
+- Structured JSON logging (API + worker)
+- Safe global exception payloads
+- Helmet headers and validated CORS origin handling
+- In-memory rate limiting on sensitive endpoints
+- Safe webhook header redaction and no-secrets connector config policy
